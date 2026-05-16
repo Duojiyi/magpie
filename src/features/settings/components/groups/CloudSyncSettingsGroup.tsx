@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
+import type { CloudSyncContentPrefs } from "../../../app/types";
 
 export interface CloudSyncStatusPayload {
     state: string;
@@ -38,6 +39,8 @@ interface CloudSyncSettingsGroupProps {
     setCloudSyncWebdavPassword: (val: string) => void;
     cloudSyncWebdavBasePath: string;
     setCloudSyncWebdavBasePath: (val: string) => void;
+    cloudSyncContentPrefs: CloudSyncContentPrefs;
+    setCloudSyncContentPrefs: (val: CloudSyncContentPrefs) => void;
     saveCloudSync: (key: string, val: string) => void;
     status: CloudSyncStatusPayload;
     syncingNow: boolean;
@@ -79,6 +82,8 @@ const CloudSyncSettingsGroup = ({
     setCloudSyncWebdavPassword,
     cloudSyncWebdavBasePath,
     setCloudSyncWebdavBasePath,
+    cloudSyncContentPrefs,
+    setCloudSyncContentPrefs,
     saveCloudSync,
     status,
     syncingNow,
@@ -95,12 +100,28 @@ const CloudSyncSettingsGroup = ({
         return String(Math.min(1440, Math.max(5, parsed)));
     };
 
+    const patchContentPrefs = (key: keyof CloudSyncContentPrefs, nextVal: boolean) => {
+        const next = { ...cloudSyncContentPrefs, [key]: nextVal };
+        setCloudSyncContentPrefs(next);
+        saveCloudSync("cloud_sync_content_prefs", JSON.stringify(next));
+    };
+
     return (
         <div className={`settings-group ${collapsed ? "collapsed" : ""}`}>
             <div className="group-header" onClick={onToggle}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                     <h3 style={{ margin: 0 }}>{t("cloud_sync_settings")}</h3>
-                    <span className="settings-inline-note">Beta</span>
+                    <span
+                        style={{
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            color: "var(--text-secondary)",
+                            opacity: 0.75,
+                            letterSpacing: "0.2px"
+                        }}
+                    >
+                        Beta
+                    </span>
                     {cloudSyncEnabled && (
                         <span
                             style={{
@@ -190,6 +211,79 @@ const CloudSyncSettingsGroup = ({
                         </label>
                     </div>
 
+                    <div style={{ marginTop: "6px", marginBottom: "4px" }}>
+                        <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "6px", color: "var(--text-primary)" }}>
+                            {t("cloud_sync_content_scope")}
+                        </div>
+                        <div style={{ fontSize: "11px", marginBottom: "10px", color: "var(--text-secondary)" }}>
+                            {t("cloud_sync_content_scope_hint")}
+                        </div>
+                        <div className="setting-item">
+                            <LabelWithHint
+                                label={t("cloud_sync_sync_text")}
+                                hint={t("cloud_sync_sync_text_hint")}
+                                hintKey="cloud_sync_sync_text"
+                            />
+                            <label className="switch">
+                                <input
+                                    className="cb"
+                                    type="checkbox"
+                                    checked={cloudSyncContentPrefs.text}
+                                    onChange={(e) => patchContentPrefs("text", e.target.checked)}
+                                />
+                                <div className="toggle"><div className="left" /><div className="right" /></div>
+                            </label>
+                        </div>
+                        <div className="setting-item">
+                            <LabelWithHint
+                                label={t("cloud_sync_sync_image")}
+                                hint={t("cloud_sync_sync_image_hint")}
+                                hintKey="cloud_sync_sync_image"
+                            />
+                            <label className="switch">
+                                <input
+                                    className="cb"
+                                    type="checkbox"
+                                    checked={cloudSyncContentPrefs.image}
+                                    onChange={(e) => patchContentPrefs("image", e.target.checked)}
+                                />
+                                <div className="toggle"><div className="left" /><div className="right" /></div>
+                            </label>
+                        </div>
+                        <div className="setting-item">
+                            <LabelWithHint
+                                label={t("cloud_sync_sync_file_path")}
+                                hint={t("cloud_sync_sync_file_path_hint")}
+                                hintKey="cloud_sync_sync_file_path"
+                            />
+                            <label className="switch">
+                                <input
+                                    className="cb"
+                                    type="checkbox"
+                                    checked={cloudSyncContentPrefs.file_path}
+                                    onChange={(e) => patchContentPrefs("file_path", e.target.checked)}
+                                />
+                                <div className="toggle"><div className="left" /><div className="right" /></div>
+                            </label>
+                        </div>
+                        <div className="setting-item">
+                            <LabelWithHint
+                                label={t("cloud_sync_sync_emoji")}
+                                hint={t("cloud_sync_sync_emoji_hint")}
+                                hintKey="cloud_sync_sync_emoji"
+                            />
+                            <label className="switch">
+                                <input
+                                    className="cb"
+                                    type="checkbox"
+                                    checked={cloudSyncContentPrefs.emoji}
+                                    onChange={(e) => patchContentPrefs("emoji", e.target.checked)}
+                                />
+                                <div className="toggle"><div className="left" /><div className="right" /></div>
+                            </label>
+                        </div>
+                    </div>
+
                     {cloudSyncAuto && (
                         <div className="setting-item">
                             <LabelWithHint
@@ -199,7 +293,7 @@ const CloudSyncSettingsGroup = ({
                             />
                             <input
                                 className="search-input"
-                                style={{ borderRadius: "4px", padding: "8px", width: "180px" }}
+                                style={{ borderRadius: "4px", padding: "4px 8px", width: "70px", textAlign: "right" }}
                                 value={cloudSyncIntervalSec}
                                 onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                                 onChange={(e) => setCloudSyncIntervalSec(e.target.value)}
@@ -222,7 +316,7 @@ const CloudSyncSettingsGroup = ({
                             />
                             <input
                                 className="search-input"
-                                style={{ borderRadius: "4px", padding: "8px", width: "180px" }}
+                                style={{ borderRadius: "4px", padding: "4px 8px", width: "70px", textAlign: "right" }}
                                 value={cloudSyncSnapshotIntervalMin}
                                 onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                                 onChange={(e) => setCloudSyncSnapshotIntervalMin(e.target.value)}
@@ -243,7 +337,7 @@ const CloudSyncSettingsGroup = ({
                         </div>
                         <input
                             className="search-input"
-                            style={{ borderRadius: "4px", padding: "8px", width: "180px" }}
+                            style={{ borderRadius: "4px", padding: "4px 8px", width: "140px" }}
                             value={cloudSyncWebdavUrl}
                             onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                             onChange={(e) => setCloudSyncWebdavUrl(e.target.value)}
@@ -258,7 +352,7 @@ const CloudSyncSettingsGroup = ({
                         </div>
                         <input
                             className="search-input"
-                            style={{ borderRadius: "4px", padding: "8px", width: "180px" }}
+                            style={{ borderRadius: "4px", padding: "4px 8px", width: "140px" }}
                             value={cloudSyncWebdavUsername}
                             onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                             onChange={(e) => setCloudSyncWebdavUsername(e.target.value)}
@@ -276,7 +370,7 @@ const CloudSyncSettingsGroup = ({
                         <input
                             className="search-input"
                             type="password"
-                            style={{ borderRadius: "4px", padding: "8px", width: "180px" }}
+                            style={{ borderRadius: "4px", padding: "4px 8px", width: "140px" }}
                             value={cloudSyncWebdavPassword}
                             onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                             onChange={(e) => setCloudSyncWebdavPassword(e.target.value)}
@@ -293,7 +387,7 @@ const CloudSyncSettingsGroup = ({
                         />
                         <input
                             className="search-input"
-                            style={{ borderRadius: "4px", padding: "8px", width: "180px" }}
+                            style={{ borderRadius: "4px", padding: "4px 8px", width: "140px" }}
                             value={cloudSyncWebdavBasePath}
                             onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                             onChange={(e) => setCloudSyncWebdavBasePath(e.target.value)}
