@@ -6,8 +6,22 @@ export type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
 export type InstalledAppOption = { label: string; value: string };
 export type DefaultAppsMap = Record<string, string>;
-export type SettingsSubpage = "home" | "advanced";
 export type QuickPasteModifier = "disabled" | "ctrl" | "alt" | "shift" | "win";
+export type SettingsSubpage = "home" | "advanced" | "theme-store";
+
+export type CloudSyncContentPrefs = {
+  text: boolean;
+  image: boolean;
+  file_path: boolean;
+  emoji: boolean;
+};
+
+export const DEFAULT_CLOUD_SYNC_CONTENT_PREFS: CloudSyncContentPrefs = {
+  text: true,
+  image: true,
+  file_path: true,
+  emoji: true
+};
 
 export interface AppState {
   showSettings: boolean;
@@ -116,10 +130,9 @@ export interface AppState {
   setTheme: StateSetter<string>;
   colorMode: string;
   setColorMode: StateSetter<string>;
-  showAppBorder: boolean;
-  setShowAppBorder: StateSetter<boolean>;
   showSourceAppIcon: boolean;
   setShowSourceAppIcon: StateSetter<boolean>;
+
   compactMode: boolean;
   setCompactMode: StateSetter<boolean>;
   clipboardItemFontSize: number;
@@ -140,10 +153,6 @@ export interface AppState {
   setSettingsLoaded: StateSetter<boolean>;
   isWindowPinned: boolean;
   setIsWindowPinned: StateSetter<boolean>;
-  winClipboardDisabled: boolean;
-  setWinClipboardDisabled: StateSetter<boolean>;
-  registryWinVEnabled: boolean;
-  setRegistryWinVEnabled: StateSetter<boolean>;
   showSearchBox: boolean;
   setShowSearchBox: StateSetter<boolean>;
   scrollTopButtonEnabled: boolean;
@@ -152,10 +161,10 @@ export interface AppState {
   setArrowKeySelection: StateSetter<boolean>;
   hideTrayIcon: boolean;
   setHideTrayIcon: StateSetter<boolean>;
+  hideDockIcon: boolean;
+  setHideDockIcon: StateSetter<boolean>;
   edgeDocking: boolean;
   setEdgeDocking: StateSetter<boolean>;
-  followMouse: boolean;
-  setFollowMouse: StateSetter<boolean>;
   customBackground: string;
   setCustomBackground: StateSetter<string>;
   customBackgroundOpacity: number;
@@ -212,6 +221,8 @@ export interface AppState {
   setCloudSyncWebdavPassword: StateSetter<string>;
   cloudSyncWebdavBasePath: string;
   setCloudSyncWebdavBasePath: StateSetter<string>;
+  cloudSyncContentPrefs: CloudSyncContentPrefs;
+  setCloudSyncContentPrefs: StateSetter<CloudSyncContentPrefs>;
   fileServerEnabled: boolean;
   setFileServerEnabled: StateSetter<boolean>;
   fileServerPort: string;
@@ -232,12 +243,10 @@ export interface AppState {
   setFileServerAutoClose: StateSetter<boolean>;
   soundEnabled: boolean;
   setSoundEnabled: StateSetter<boolean>;
-  soundVolume: number;
-  setSoundVolume: StateSetter<number>;
   pasteSoundEnabled: boolean;
   setPasteSoundEnabled: StateSetter<boolean>;
-  pasteMethod: string;
-  setPasteMethod: StateSetter<string>;
+  soundVolume: number;
+  setSoundVolume: StateSetter<number>;
   aiEnabled: boolean;
   setAiEnabled: StateSetter<boolean>;
   aiTargetLang: string;

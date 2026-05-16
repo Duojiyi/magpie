@@ -9,6 +9,7 @@ import {
     supportsSurfaceOpacity
 } from "../../../../shared/config/themes";
 import type { Locale } from "../../../../shared/types";
+import type { SettingsSubpage } from "../../../app/types";
 
 interface LabelWithHintProps {
     label: string;
@@ -27,10 +28,9 @@ interface AppearanceSettingsGroupProps {
     setColorMode: (val: string) => void;
     language: Locale;
     setLanguage: (val: Locale) => void;
-    showAppBorder: boolean;
-    setShowAppBorder: (val: boolean) => void;
     showSourceAppIcon: boolean;
     setShowSourceAppIcon: (val: boolean) => void;
+
     compactMode: boolean;
     setCompactMode: (val: boolean) => void;
     clipboardItemFontSize: number;
@@ -44,6 +44,7 @@ interface AppearanceSettingsGroupProps {
     surfaceOpacity: number;
     setSurfaceOpacity: (val: number) => void;
     saveAppSetting: (key: string, val: string) => void;
+    setSettingsSubpage: (val: SettingsSubpage) => void;
 }
 
 const clampProgress = (value: number, min: number, max: number) => {
@@ -71,10 +72,9 @@ const AppearanceSettingsGroup = ({
     setColorMode,
     language,
     setLanguage,
-    showAppBorder,
-    setShowAppBorder,
     showSourceAppIcon,
     setShowSourceAppIcon,
+
     compactMode,
     setCompactMode,
     clipboardItemFontSize,
@@ -87,7 +87,8 @@ const AppearanceSettingsGroup = ({
     setCustomBackgroundOpacity,
     surfaceOpacity,
     setSurfaceOpacity,
-    saveAppSetting
+    saveAppSetting,
+    setSettingsSubpage
 }: AppearanceSettingsGroupProps) => {
     const showCustomBackgroundControls = supportsCustomBackground(theme);
     const showSurfaceOpacityControls = supportsSurfaceOpacity(theme);
@@ -120,6 +121,16 @@ const AppearanceSettingsGroup = ({
                                 </span>
                             </button>
                         ))}
+                        <button
+                            onClick={() => setSettingsSubpage("theme-store")}
+                            className="btn-icon theme-choice-btn"
+                            type="button"
+                            style={{ gridColumn: "span 3", fontSize: "11px", opacity: 0.85 }}
+                        >
+                            <span className="theme-choice-title">
+                                {t("theme_store") || "🎨 主题商店"}
+                            </span>
+                        </button>
                     </div>
                 </div>
 
@@ -136,6 +147,7 @@ const AppearanceSettingsGroup = ({
                             <button
                                 key={modeItem.id}
                                 onClick={() => {
+                                    console.log('[THEME DEBUG] Saving color_mode:', modeItem.id);
                                     setColorMode(modeItem.id);
                                     saveAppSetting('color_mode', modeItem.id);
                                 }}
@@ -171,26 +183,7 @@ const AppearanceSettingsGroup = ({
                     </div>
                 </div>
 
-                <div className="setting-item">
-                    <LabelWithHint
-                        label={t('show_app_border') || '显示应用边框'}
-                        hint={t('show_app_border_hint') || '关闭后隐藏主窗口边框和阴影'}
-                        hintKey="show_app_border"
-                    />
-                    <label className="switch">
-                        <input
-                            className="cb"
-                            type="checkbox"
-                            checked={showAppBorder}
-                            onChange={(e) => {
-                                const val = e.target.checked;
-                                setShowAppBorder(val);
-                                saveAppSetting('show_app_border', String(val));
-                            }}
-                        />
-                        <div className="toggle"><div className="left" /><div className="right" /></div>
-                    </label>
-                </div>
+
 
                 <div className="setting-item">
                     <LabelWithHint

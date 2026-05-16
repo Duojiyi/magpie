@@ -1,25 +1,33 @@
 import { useState } from "react";
 import { DEFAULT_THEME } from "../../../shared/config/themes";
 import type { ClipboardEntry, Locale } from "../../../shared/types";
-import type { AppState, DefaultAppsMap, InstalledAppOption, QuickPasteModifier } from "../types";
+import type {
+  AppState,
+  CloudSyncContentPrefs,
+  DefaultAppsMap,
+  InstalledAppOption,
+  QuickPasteModifier,
+  SettingsSubpage
+} from "../types";
+import { DEFAULT_CLOUD_SYNC_CONTENT_PREFS } from "../types";
 import type { AiProfile, AppCleanupPolicy } from "../../settings/types";
 
 const DEFAULT_AI_KEY = import.meta.env.VITE_AI_DEFAULT_API_KEY ?? "";
 
 export const useAppState = (): AppState => {
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsSubpage, setSettingsSubpage] = useState<"home" | "advanced">("home");
+  const [settingsSubpage, setSettingsSubpage] = useState<SettingsSubpage>("home");
   const [showTagManager, setShowTagManager] = useState(false);
   const [tagManagerEnabled, setTagManagerEnabled] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
     general: true,
     clipboard: true,
+    advanced: true,
     appearance: true,
     sync: true,
     cloud_sync: true,
     ai: true,
     file_transfer: true,
-    advanced: true,
     default_apps: true,
     data: true
   });
@@ -47,9 +55,10 @@ export const useAppState = (): AppState => {
   const [dataPath, setDataPath] = useState<string>("");
   const [hotkey, setHotkey] = useState<string>("Alt+C");
   const [sequentialHotkey, setSequentialHotkey] = useState<string>("Alt+V");
-  const [richPasteHotkey, setRichPasteHotkey] = useState<string>("Ctrl+Shift+Z");
+  const [richPasteHotkey, setRichPasteHotkey] = useState<string>("Alt+Shift+V");
   const [searchHotkey, setSearchHotkey] = useState<string>("Alt+F");
-  const [quickPasteModifier, setQuickPasteModifier] = useState<QuickPasteModifier>("disabled");
+  const [quickPasteModifier, setQuickPasteModifier] =
+    useState<QuickPasteModifier>("disabled");
   const [sequentialMode, setSequentialModeState] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isRecordingSequential, setIsRecordingSequential] = useState(false);
@@ -72,12 +81,12 @@ export const useAppState = (): AppState => {
   const [appCleanupPolicies, setAppCleanupPolicies] = useState<AppCleanupPolicy[]>([]);
   const [captureFiles, setCaptureFiles] = useState(true);
   const [captureRichText, setCaptureRichText] = useState(false);
-  const [richTextSnapshotPreview, setRichTextSnapshotPreview] = useState(false);
+  const [richTextSnapshotPreview, setRichTextSnapshotPreview] = useState(true);
   const [silentStart, setSilentStart] = useState(true);
   const [theme, setTheme] = useState(DEFAULT_THEME);
   const [colorMode, setColorMode] = useState("system");
-  const [showAppBorder, setShowAppBorder] = useState(true);
   const [showSourceAppIcon, setShowSourceAppIcon] = useState(true);
+
   const [compactMode, setCompactMode] = useState(false);
   const [clipboardItemFontSize, setClipboardItemFontSize] = useState(13);
   const [clipboardTagFontSize, setClipboardTagFontSize] = useState(10);
@@ -88,14 +97,12 @@ export const useAppState = (): AppState => {
   const [language, setLanguage] = useState<Locale>("zh");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [isWindowPinned, setIsWindowPinned] = useState(false);
-  const [winClipboardDisabled, setWinClipboardDisabled] = useState(false);
-  const [registryWinVEnabled, setRegistryWinVEnabled] = useState(false);
   const [showSearchBox, setShowSearchBox] = useState(true);
   const [scrollTopButtonEnabled, setScrollTopButtonEnabled] = useState(true);
   const [arrowKeySelection, setArrowKeySelection] = useState(true);
   const [hideTrayIcon, setHideTrayIcon] = useState(false);
+  const [hideDockIcon, setHideDockIcon] = useState(false);
   const [edgeDocking, setEdgeDocking] = useState(false);
-  const [followMouse, setFollowMouse] = useState(true);
   const [customBackground, setCustomBackground] = useState<string>("");
   const [customBackgroundOpacity, setCustomBackgroundOpacity] = useState(45);
   const [surfaceOpacity, setSurfaceOpacity] = useState(50);
@@ -124,6 +131,8 @@ export const useAppState = (): AppState => {
   const [cloudSyncWebdavUsername, setCloudSyncWebdavUsername] = useState("");
   const [cloudSyncWebdavPassword, setCloudSyncWebdavPassword] = useState("");
   const [cloudSyncWebdavBasePath, setCloudSyncWebdavBasePath] = useState("tiez-sync");
+  const [cloudSyncContentPrefs, setCloudSyncContentPrefs] =
+    useState<CloudSyncContentPrefs>(DEFAULT_CLOUD_SYNC_CONTENT_PREFS);
   const [fileServerEnabled, setFileServerEnabled] = useState(false);
   const [fileServerPort, setFileServerPort] = useState("12345");
   const [localIp, setLocalIp] = useState("");
@@ -134,9 +143,8 @@ export const useAppState = (): AppState => {
   const [fileTransferAutoCopy, setFileTransferAutoCopy] = useState(false);
   const [fileServerAutoClose, setFileServerAutoClose] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const [soundVolume, setSoundVolume] = useState(70);
   const [pasteSoundEnabled, setPasteSoundEnabled] = useState(true);
-  const [pasteMethod, setPasteMethod] = useState("shift_insert");
+  const [soundVolume, setSoundVolume] = useState(1.0);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [aiTargetLang, setAiTargetLang] = useState("zh");
   const [aiThinkingBudget, setAiThinkingBudget] = useState("1024");
@@ -276,10 +284,9 @@ export const useAppState = (): AppState => {
     setTheme,
     colorMode,
     setColorMode,
-    showAppBorder,
-    setShowAppBorder,
     showSourceAppIcon,
     setShowSourceAppIcon,
+
     compactMode,
     setCompactMode,
     clipboardItemFontSize,
@@ -300,10 +307,6 @@ export const useAppState = (): AppState => {
     setSettingsLoaded,
     isWindowPinned,
     setIsWindowPinned,
-    winClipboardDisabled,
-    setWinClipboardDisabled,
-    registryWinVEnabled,
-    setRegistryWinVEnabled,
     showSearchBox,
     setShowSearchBox,
     scrollTopButtonEnabled,
@@ -312,10 +315,11 @@ export const useAppState = (): AppState => {
     setArrowKeySelection,
     hideTrayIcon,
     setHideTrayIcon,
+    hideDockIcon,
+    setHideDockIcon,
     edgeDocking,
     setEdgeDocking,
-    followMouse,
-    setFollowMouse,
+
     customBackground,
     setCustomBackground,
     customBackgroundOpacity,
@@ -372,6 +376,8 @@ export const useAppState = (): AppState => {
     setCloudSyncWebdavPassword,
     cloudSyncWebdavBasePath,
     setCloudSyncWebdavBasePath,
+    cloudSyncContentPrefs,
+    setCloudSyncContentPrefs,
     fileServerEnabled,
     setFileServerEnabled,
     fileServerPort,
@@ -392,12 +398,10 @@ export const useAppState = (): AppState => {
     setFileServerAutoClose,
     soundEnabled,
     setSoundEnabled,
-    soundVolume,
-    setSoundVolume,
     pasteSoundEnabled,
     setPasteSoundEnabled,
-    pasteMethod,
-    setPasteMethod,
+    soundVolume,
+    setSoundVolume,
     aiEnabled,
     setAiEnabled,
     aiTargetLang,
@@ -418,4 +422,3 @@ export const useAppState = (): AppState => {
     setTypeFilter
   };
 };
-

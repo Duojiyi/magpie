@@ -6,14 +6,14 @@ import { getVersion } from "@tauri-apps/api/app";
 import { ChevronRight, HelpCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import type { Locale } from "../../../shared/types";
-import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage } from "../../app/types";
+import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage, CloudSyncContentPrefs } from "../../app/types";
 import type { AiProfile, AiProfileStatusMap, AppCleanupPolicy, EditableAiProfile } from "../types";
 import AppSelectorModal from "./AppSelectorModal";
-
-
+// Removed UpdateModal imports
 import AiProfileModal from "./AiProfileModal";
 import GeneralSettingsGroup from "./groups/GeneralSettingsGroup";
 import ClipboardSettingsGroup from "./groups/ClipboardSettingsGroup";
+import AdvancedSettingsGroup from "./groups/AdvancedSettingsGroup";
 import AppearanceSettingsGroup from "./groups/AppearanceSettingsGroup";
 import SyncSettingsGroup from "./groups/SyncSettingsGroup";
 import CloudSyncSettingsGroup, { type CloudSyncStatusPayload } from "./groups/CloudSyncSettingsGroup";
@@ -21,22 +21,17 @@ import DefaultAppsSettingsGroup from "./groups/DefaultAppsSettingsGroup";
 import DataSettingsGroup from "./groups/DataSettingsGroup";
 import FileTransferSettingsGroup from "./groups/FileTransferSettingsGroup";
 import AiSettingsGroup from "./groups/AiSettingsGroup";
-import AdvancedSettingsGroup from "./groups/AdvancedSettingsGroup";
 import SettingsFooter from "./SettingsFooter";
+import ThemeStorePanel from "../../theme-store/components/ThemeStorePanel";
 import { CLOUD_SYNC_ENABLED } from "../../../shared/config/edition";
-import type { QuickPasteModifier } from "../../app/types";
-
-const SETTINGS_DEBUG = import.meta.env.DEV;
-const settingsLog = (...args: unknown[]) => {
-    if (!SETTINGS_DEBUG) return;
-    console.log(...args);
-};
 
 interface SettingsPanelProps {
     t: (key: string) => string;
     theme: string;
     language: Locale;
     colorMode: string;
+    showSourceAppIcon: boolean;
+    setShowSourceAppIcon: (val: boolean) => void;
     clipboardItemFontSize: number;
     setClipboardItemFontSize: (val: number) => void;
     clipboardTagFontSize: number;
@@ -45,7 +40,6 @@ interface SettingsPanelProps {
     // State
     collapsedGroups: Record<string, boolean>;
     settingsSubpage: SettingsSubpage;
-    setSettingsSubpage: (val: SettingsSubpage) => void;
     autoStart: boolean;
     silentStart: boolean;
     persistent: boolean;
@@ -64,7 +58,8 @@ interface SettingsPanelProps {
     isRecordingRich: boolean;
     searchHotkey: string;
     isRecordingSearch: boolean;
-    quickPasteModifier: QuickPasteModifier;
+    quickPasteModifier: "disabled" | "ctrl" | "alt" | "shift" | "win";
+    setQuickPasteModifier: (val: "disabled" | "ctrl" | "alt" | "shift" | "win") => void;
     privacyProtection: boolean;
     privacyProtectionKinds: string[];
     setPrivacyProtectionKinds: (val: string[]) => void;
@@ -82,9 +77,6 @@ interface SettingsPanelProps {
     setAppCleanupPolicies: (val: AppCleanupPolicy[]) => void;
     hotkey: string;
     showHotkeyHint: boolean;
-    winClipboardDisabled: boolean;
-    registryWinVEnabled: boolean;
-    setRegistryWinVEnabled: (val: boolean) => void;
     showSearchBox: boolean;
     setShowSearchBox: (val: boolean) => void;
     scrollTopButtonEnabled: boolean;
@@ -99,18 +91,16 @@ interface SettingsPanelProps {
 
     soundEnabled: boolean;
     setSoundEnabled: (val: boolean) => void;
-    soundVolume: number;
-    setSoundVolume: (val: number) => void;
     pasteSoundEnabled: boolean;
     setPasteSoundEnabled: (val: boolean) => void;
-    pasteMethod: string;
-    setPasteMethod: (val: string) => void;
+    soundVolume: number;
+    setSoundVolume: (val: number) => void;
     hideTrayIcon: boolean;
     setHideTrayIcon: (val: boolean) => void;
+    hideDockIcon: boolean;
+    setHideDockIcon: (val: boolean) => void;
     edgeDocking: boolean;
     setEdgeDocking: (val: boolean) => void;
-    followMouse: boolean;
-    setFollowMouse: (val: boolean) => void;
     customBackground: string;
     setCustomBackground: (val: string) => void;
     customBackgroundOpacity: number;
@@ -139,6 +129,8 @@ interface SettingsPanelProps {
     cloudSyncWebdavUsername: string;
     cloudSyncWebdavPassword: string;
     cloudSyncWebdavBasePath: string;
+    cloudSyncContentPrefs: CloudSyncContentPrefs;
+    setCloudSyncContentPrefs: (val: CloudSyncContentPrefs) => void;
 
     fileServerEnabled: boolean;
     fileServerPort: string;
@@ -160,6 +152,7 @@ interface SettingsPanelProps {
 
     // Setters/Actions
     toggleGroup: (group: string) => void;
+    setSettingsSubpage: (val: SettingsSubpage) => void;
     setAutoStart: (val: boolean) => void;
     setSilentStart: (val: boolean) => void;
     setPersistent: (val: boolean) => void;
@@ -179,22 +172,17 @@ interface SettingsPanelProps {
     updateRichPasteHotkey: (key: string) => void;
     setIsRecordingSearch: (val: boolean) => void;
     updateSearchHotkey: (key: string) => void;
-    setQuickPasteModifier: (val: QuickPasteModifier) => void;
     setPrivacyProtection: (val: boolean) => void;
     setShowHotkeyHint: (val: boolean) => void;
     setIsRecording: (val: boolean) => void;
     isRecording: boolean;
     hotkeyParts: string[];
     updateHotkey: (key: string) => void;
-    setWinClipboardDisabled: (val: boolean) => void;
 
     setTheme: (val: string) => void;
     setColorMode: (val: string) => void;
     setLanguage: (val: Locale) => void;
-    showAppBorder: boolean;
-    setShowAppBorder: (val: boolean) => void;
-    showSourceAppIcon: boolean;
-    setShowSourceAppIcon: (val: boolean) => void;
+
 
     compactMode: boolean;
     setCompactMode: (val: boolean) => void;
@@ -256,39 +244,35 @@ interface SettingsPanelProps {
 
 const SettingsPanel = (props: SettingsPanelProps) => {
     const {
-        t, theme, language, colorMode,
-        collapsedGroups, settingsSubpage, setSettingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
+        t, theme, language, colorMode, showSourceAppIcon, setShowSourceAppIcon,
+        collapsedGroups, settingsSubpage, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, deleteAfterPaste, moveToTopAfterPaste,
         sequentialMode, sequentialHotkey, isRecordingSequential,
-        richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch, quickPasteModifier,
-        privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules,
-        sensitiveMaskPrefixVisible, setSensitiveMaskPrefixVisible, sensitiveMaskSuffixVisible, setSensitiveMaskSuffixVisible, sensitiveMaskEmailDomain, setSensitiveMaskEmailDomain,
-        cleanupRules, setCleanupRules, appCleanupPolicies, setAppCleanupPolicies,
-        registryWinVEnabled, setRegistryWinVEnabled, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection,
+        richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch, quickPasteModifier, setQuickPasteModifier,
+        privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, sensitiveMaskPrefixVisible, setSensitiveMaskPrefixVisible, sensitiveMaskSuffixVisible, setSensitiveMaskSuffixVisible, sensitiveMaskEmailDomain, setSensitiveMaskEmailDomain, cleanupRules, setCleanupRules, appCleanupPolicies, setAppCleanupPolicies, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection,
         soundEnabled, setSoundEnabled, pasteSoundEnabled, setPasteSoundEnabled,
         soundVolume, setSoundVolume,
-        pasteMethod, setPasteMethod,
         hideTrayIcon, setHideTrayIcon,
+        hideDockIcon, setHideDockIcon,
         edgeDocking, setEdgeDocking,
-        followMouse, setFollowMouse,
         customBackground, setCustomBackground,
         customBackgroundOpacity, setCustomBackgroundOpacity,
         surfaceOpacity, setSurfaceOpacity,
         mqttEnabled, mqttServer, mqttPort, mqttUser, mqttPass, mqttTopic, mqttProtocol, mqttWsPath, mqttNotificationEnabled,
-        cloudSyncEnabled, cloudSyncAuto, cloudSyncIntervalSec, cloudSyncSnapshotIntervalMin, cloudSyncWebdavUrl, cloudSyncWebdavUsername, cloudSyncWebdavPassword, cloudSyncWebdavBasePath,
+        cloudSyncEnabled, cloudSyncAuto, cloudSyncIntervalSec, cloudSyncSnapshotIntervalMin, cloudSyncWebdavUrl, cloudSyncWebdavUsername, cloudSyncWebdavPassword, cloudSyncWebdavBasePath, cloudSyncContentPrefs,
         fileServerEnabled, fileServerPort, localIp, availableIps, setLocalIp, actualPort, fileTransferAutoOpen, showAutoCloseHint, fileServerAutoClose, fileTransferAutoCopy, fileTransferPath,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
-        toggleGroup, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
+        toggleGroup, setSettingsSubpage, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
         setSequentialModeState, setIsRecordingSequential, updateSequentialHotkey,
         setIsRecordingRich, updateRichPasteHotkey,
-        setIsRecordingSearch, updateSearchHotkey, setQuickPasteModifier,
+        setIsRecordingSearch, updateSearchHotkey,
         setPrivacyProtection,
         setIsRecording, isRecording, hotkey, hotkeyParts, updateHotkey,
-        setTheme, setColorMode, setLanguage, showAppBorder, setShowAppBorder, showSourceAppIcon, setShowSourceAppIcon, compactMode, setCompactMode, checkHotkeyConflict,
+        setTheme, setColorMode, setLanguage, compactMode, setCompactMode, checkHotkeyConflict,
         clipboardItemFontSize, setClipboardItemFontSize, clipboardTagFontSize, setClipboardTagFontSize,
         emojiPanelEnabled, setEmojiPanelEnabled, tagManagerEnabled, setTagManagerEnabled,
         setMqttEnabled, saveMqtt, setMqttServer, setMqttPort, setMqttUser, setMqttPass, setMqttTopic, setMqttProtocol, setMqttWsPath, setMqttNotificationEnabled,
-        setCloudSyncEnabled, setCloudSyncAuto, setCloudSyncIntervalSec, setCloudSyncSnapshotIntervalMin, setCloudSyncWebdavUrl, setCloudSyncWebdavUsername, setCloudSyncWebdavPassword, setCloudSyncWebdavBasePath, saveCloudSync,
+        setCloudSyncEnabled, setCloudSyncAuto, setCloudSyncIntervalSec, setCloudSyncSnapshotIntervalMin, setCloudSyncWebdavUrl, setCloudSyncWebdavUsername, setCloudSyncWebdavPassword, setCloudSyncWebdavBasePath, setCloudSyncContentPrefs, saveCloudSync,
         setFileServerEnabled, setFileServerPort, setFileTransferAutoOpen, setShowAutoCloseHint, setFileServerAutoClose, setFileTransferAutoCopy, fetchEffectiveTransferPath,
         setShowAppSelector, handleResetSettings,
         aiEnabled, setAiEnabled, aiTargetLang, setAiTargetLang, aiThinkingBudget, setAiThinkingBudget, saveSetting,
@@ -311,6 +295,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
     const [editingProfile, setEditingProfile] = useState<EditableAiProfile | null>(null);
     const [profileStatuses, setProfileStatuses] = useState<AiProfileStatusMap>({});
     const [updateStatus, setUpdateStatus] = useState<string>("");
+    // Removed updateModalData
     const [openHints, setOpenHints] = useState<Set<string>>(new Set());
     const [privacyKindsOpen, setPrivacyKindsOpen] = useState(false);
     const [privacyRulesOpen, setPrivacyRulesOpen] = useState(false);
@@ -430,7 +415,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             });
 
         const unlistenMqtt = listen<string>("mqtt-status", (event) => {
-            settingsLog('[MQTT STATUS] Received status:', event.payload);
+            console.log('[MQTT STATUS] Received status:', event.payload);
             setMqttStatus(event.payload as "connected" | "disconnected" | "connecting");
         });
 
@@ -448,13 +433,13 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             invoke<boolean>("get_mqtt_status"),
             invoke<boolean>("get_mqtt_running")
         ]).then(([connected, running]) => {
-            settingsLog('[MQTT INIT] connected:', connected, 'running:', running);
+            console.log('[MQTT INIT] connected:', connected, 'running:', running);
             if (connected) {
                 setMqttStatus("connected");
             } else if (running) {
                 setMqttStatus("connecting");
             } else {
-                settingsLog('[MQTT INIT] Keeping default disconnected state');
+                console.log('[MQTT INIT] Keeping default disconnected state');
             }
         }).catch(console.error);
 
@@ -466,7 +451,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         };
     }, []);
 
-    const openAdvancedSettingsWindow = useCallback(async () => {
+    const openAdvancedSettingsWindow = useCallback(() => {
         setSettingsSubpage("advanced");
     }, [setSettingsSubpage]);
 
@@ -476,7 +461,16 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             animate={{ opacity: 1, x: 0 }}
             style={{ display: 'flex', flexDirection: 'column', gap: '4px', minHeight: '100%', flex: 1 }}
         >
-            {settingsSubpage === "advanced" ? (
+            {settingsSubpage === "theme-store" ? (
+                <ThemeStorePanel
+                    t={t}
+                    theme={theme}
+                    setTheme={setTheme}
+                    saveAppSetting={saveAppSetting}
+                    language={language}
+                    onBack={() => setSettingsSubpage("home")}
+                />
+            ) : settingsSubpage === "advanced" ? (
                 <>
                     <AdvancedSettingsGroup
                         t={t}
@@ -505,6 +499,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                         onSave={saveAppSetting}
                     />
 
+                    {/* Removed UpdateModal in advanced */}
                 </>
             ) : (
                 <>
@@ -520,16 +515,16 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setSilentStart={setSilentStart}
                 hideTrayIcon={hideTrayIcon}
                 setHideTrayIcon={setHideTrayIcon}
+                hideDockIcon={hideDockIcon}
+                setHideDockIcon={setHideDockIcon}
                 edgeDocking={edgeDocking}
                 setEdgeDocking={setEdgeDocking}
-                followMouse={followMouse}
-                setFollowMouse={setFollowMouse}
-                    soundEnabled={soundEnabled}
-                    setSoundEnabled={setSoundEnabled}
-                    soundVolume={soundVolume}
-                    setSoundVolume={setSoundVolume}
-                    pasteSoundEnabled={pasteSoundEnabled}
-                    setPasteSoundEnabled={setPasteSoundEnabled}
+                soundEnabled={soundEnabled}
+                setSoundEnabled={setSoundEnabled}
+                pasteSoundEnabled={pasteSoundEnabled}
+                setPasteSoundEnabled={setPasteSoundEnabled}
+                soundVolume={soundVolume}
+                setSoundVolume={setSoundVolume}
                 showSearchBox={showSearchBox}
                 setShowSearchBox={setShowSearchBox}
                 scrollTopButtonEnabled={scrollTopButtonEnabled}
@@ -578,8 +573,6 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setDeleteAfterPaste={setDeleteAfterPaste}
                 moveToTopAfterPaste={moveToTopAfterPaste}
                 setMoveToTopAfterPaste={setMoveToTopAfterPaste}
-                pasteMethod={pasteMethod}
-                setPasteMethod={setPasteMethod}
                 sequentialMode={sequentialMode}
                 setSequentialModeState={setSequentialModeState}
                 sequentialHotkey={sequentialHotkey}
@@ -603,8 +596,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setPrivacyKindsOpen={setPrivacyKindsOpen}
                 privacyRulesOpen={privacyRulesOpen}
                 setPrivacyRulesOpen={setPrivacyRulesOpen}
-                registryWinVEnabled={registryWinVEnabled}
-                setRegistryWinVEnabled={setRegistryWinVEnabled}
+
                 isRecording={isRecording}
                 setIsRecording={setIsRecording}
                 hotkeyParts={hotkeyParts}
@@ -627,8 +619,6 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setColorMode={setColorMode}
                 language={language}
                 setLanguage={setLanguage}
-                showAppBorder={showAppBorder}
-                setShowAppBorder={setShowAppBorder}
                 showSourceAppIcon={showSourceAppIcon}
                 setShowSourceAppIcon={setShowSourceAppIcon}
                 compactMode={compactMode}
@@ -644,6 +634,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 surfaceOpacity={surfaceOpacity}
                 setSurfaceOpacity={setSurfaceOpacity}
                 saveAppSetting={saveAppSetting}
+                setSettingsSubpage={setSettingsSubpage}
             />
 
             {/* Sync Settings */}
@@ -696,6 +687,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                     setCloudSyncWebdavPassword={setCloudSyncWebdavPassword}
                     cloudSyncWebdavBasePath={cloudSyncWebdavBasePath}
                     setCloudSyncWebdavBasePath={setCloudSyncWebdavBasePath}
+                    cloudSyncContentPrefs={cloudSyncContentPrefs}
+                    setCloudSyncContentPrefs={setCloudSyncContentPrefs}
                     saveCloudSync={saveCloudSync}
                     status={cloudSyncStatus}
                     syncingNow={cloudSyncNowRunning}
@@ -795,7 +788,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 appVersion={appVersion}
                 updateStatus={updateStatus}
                 setUpdateStatus={setUpdateStatus}
-                
+                // Removed setUpdateModalData
                 onResetSettings={handleResetSettings}
                 emailCopied={emailCopied}
                 setEmailCopied={setEmailCopied}
@@ -819,6 +812,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 onSave={saveAppSetting}
             />
 
+            {/* Removed UpdateModal in generic */}
                 </>
             )}
         </motion.div>
