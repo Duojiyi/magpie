@@ -10,20 +10,24 @@
 
   ### **STAY FAST. STAY SYNCED.**
 
-  | STARS | VERSION | LICENSE | PLATFORM |
-  | :--- | :--- | :--- | :--- |
-  | [![Stars](https://img.shields.io/github/stars/jimuzhe/tiez-clipboard?label=STARS&style=for-the-badge&color=4CAF50)](https://github.com/jimuzhe/tiez-clipboard/stargazers) | [![Version](https://img.shields.io/github/v/release/jimuzhe/tiez-clipboard?label=VERSION&style=for-the-badge&color=2196F3)](https://github.com/jimuzhe/tiez-clipboard/releases) | [![License](https://img.shields.io/badge/LICENSE-GPL--3.0-FF9800?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0) | [![Platform](https://img.shields.io/badge/PLATFORM-WIN%20%2F%20MAC-f44336?style=for-the-badge)](https://github.com/jimuzhe/tiez-clipboard/releases) |
+  | VERSION | LICENSE | PLATFORM |
+  | :--- | :--- | :--- |
+  | [![Version](https://img.shields.io/github/v/release/Duojiyi/tiez-clipboard?label=VERSION&style=for-the-badge&color=2196F3)](https://github.com/Duojiyi/tiez-clipboard/releases) | [![License](https://img.shields.io/badge/LICENSE-GPL--3.0-FF9800?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0) | [![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-f44336?style=for-the-badge)](https://github.com/Duojiyi/tiez-clipboard/releases) |
 
   [English](./README.md) | [简体中文](./README.zh-CN.md)
 </div>
 
 ---
 
+## 关于本仓库
+
+本仓库 fork 自 [`jimuzhe/tiez-clipboard`](https://github.com/jimuzhe/tiez-clipboard)，依据 GPL-3.0 协议进行二次分发，包含若干来自社区 PR 的修复合入，详见 [CHANGELOG](./CHANGELOG.md)。
+
+---
+
 <div align="center">
 
-## 主题展示 (Theme Gallery)
-
-探索为各种工作场景和效率场景精心设计的 4 款优雅主题样式。
+## 主题展示
 
   <table>
     <tr>
@@ -50,7 +54,7 @@
 ### 基础体验
 - **原生效率**：基于 Tauri 2 和 Rust 构建，极致的内存占用与流畅度。
 - **智能采集**：自动记录文字、富文本 (HTML)、图片、文件和目录路径。
-- **现代美学**：完美支持 云母/亚克力 背景效果及暗黑模式，内置 **5 款经过精心调优的主题样式**。
+- **现代美学**：完美支持 云母/亚克力 背景效果及暗黑模式，内置经过精心调优的多款主题。
 - **贴边收纳**：支持自动停靠在屏幕边缘，节省桌面空间且随时呼出。
 
 ### 管理与增强
@@ -74,57 +78,18 @@
 
 ## 系统要求
 
-### 平台支持
 | 平台 | 运行环境要求 | 获取格式 |
 | :--- | :--- | :--- |
-| **Windows** | Windows 10/11 (x86/x64)<br>*(推荐使用 Win11)* | `.exe` / **`.zip` (便携版)** |
-| **macOS** | Sierra 10.15+ <br>(Apple Silicon / Intel) | `.dmg` |
-| **Linux** | 即将支持 | 敬请期待 |
+| **Windows** | Windows 10/11 (x64) | `.exe` / `.msi` |
 
-[**前往 Releases 下载最新版本 →**](https://github.com/jimuzhe/tiez-clipboard/releases)
+[**前往 Releases 下载最新版本 →**](https://github.com/Duojiyi/tiez-clipboard/releases)
 
 ---
 
-## Star History
+## 开源协议
 
-<div align="center">
-  <a href="https://star-history.com/#jimuzhe/tiez-clipboard&Date">
-    <img src="https://api.star-history.com/svg?repos=jimuzhe/tiez-clipboard&type=Date" alt="Star History Chart" width="800" />
-  </a>
-</div>
+本项目基于 [GNU GPL-3.0](./LICENSE) 协议开源。
 
----
-
-## 交流与赞助
-
-如果 TieZ 提高了你的工作效率，欢迎赞助本项目持续演进。
-
-<div align="center">
-  <table style="border: none;">
-    <tr>
-      <td align="center" style="border: none;">
-        <p><strong>微信赞赏</strong></p>
-        <img src="docs/images/wx.jpeg" alt="微信收款码" width="180" height="180" />
-      </td>
-      <td align="center" style="border: none;">
-        <p><strong>支付宝赞赏</strong></p>
-        <img src="docs/images/zfb.jpeg" alt="支付宝收款码" width="180" height="180" />
-      </td>
-      <td align="center" style="border: none;">
-        <p><strong>QQ 交流群</strong></p>
-        <img src="docs/images/qq.jpeg" alt="QQ 群二维码" width="180" height="180" />
-      </td>
-    </tr>
-  </table>
-  <br>
-  <p>每一份支持都是开发者保持更新的动力！</p>
-  <a href="https://tiez.name666.top/zh/sponsors.html"><strong>查看打赏赞助名单</strong></a>
-</div>
-
----
-
-<div align="center">
-  为每一个追求极致效率的开发者倾力打造。
-  <br>
-  <b>如果你喜欢这个项目，欢迎点个 Star。</b>
-</div>
+- 原始版权归 **jimuzhe/tiez-clipboard** 项目作者及全体贡献者所有。
+- 本仓库为二次分发版本，依 GPL-3.0 第 5 条要求保留原始版权声明、协议文本及变更说明。
+- 任何基于本仓库的再分发同样必须以 GPL-3.0 协议开源全部对应源码。
