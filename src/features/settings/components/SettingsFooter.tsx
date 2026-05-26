@@ -10,8 +10,6 @@ interface SettingsFooterProps {
     updateStatus: string;
     setUpdateStatus: (val: string) => void;
     onResetSettings: () => void;
-    emailCopied: boolean;
-    setEmailCopied: (val: boolean) => void;
 }
 
 const SettingsFooter = ({
@@ -20,8 +18,6 @@ const SettingsFooter = ({
     updateStatus,
     setUpdateStatus,
     onResetSettings,
-    emailCopied,
-    setEmailCopied
 }: SettingsFooterProps) => {
     const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
 
@@ -232,15 +228,13 @@ const SettingsFooter = ({
                         marginBottom: '0'
                     }}
                     onClick={() => {
-                        navigator.clipboard.writeText('tiez@name666.top');
-                        setEmailCopied(true);
-                        setTimeout(() => setEmailCopied(false), 2000);
+                        openUrl('https://github.com/Duojiyi/tiez-clipboard/issues');
                     }}
                 >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <MessageSquare size={16} />
                         <span style={{ fontSize: '13px', fontWeight: 600 }}>
-                            {emailCopied ? t('email_copied') : t('feedback')}
+                            {t('feedback')}
                         </span>
                     </div>
                 </div>
@@ -341,7 +335,7 @@ const SettingsFooter = ({
                     flexWrap: 'wrap'
                 }}>
                     <button
-                        onClick={() => openUrl('https://tiez.name666.top/')}
+                        onClick={() => openUrl('https://github.com/Duojiyi/tiez-clipboard/releases/latest')}
                         style={{
                             fontSize: '11px',
                             color: 'var(--accent-color)',
@@ -359,7 +353,7 @@ const SettingsFooter = ({
                         {t('official_website')}
                     </button>
                     <button
-                        onClick={() => openUrl('https://github.com/jimuzhe/tiez-clipboard')}
+                        onClick={() => openUrl('https://github.com/Duojiyi/tiez-clipboard')}
                         style={{
                             fontSize: '11px',
                             color: 'var(--accent-color)',

@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TieZ",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "identifier": "com.tiez",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0MDY1QzlGQkU0ODcwMjMKUldRamNFaStuMXdHcEtFWlNINnVJcVgxa2tRb0wrRlBjdzRmZ3Z1WGJxZ1V3R0w5ZmNUemtvRjMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCMjNFRDExOTM4MzIzNTEKUldSUkk0T1RFZTBqTy9UQ295TFk0MlJzMzNVYzJreGM2UGp0ZGdrejE3eHdGcDlXSmVBcHpOSXAK",
       "endpoints": [
-        "https://tiez.name666.top/api/v1/latest-version?platform={{target}}"
+        "https://github.com/Duojiyi/tiez-clipboard/releases/latest/download/latest.json"
       ]
     }
   },
@@ -125,10 +125,10 @@
               "identifier": "opener:allow-open-url",
               "allow": [
                 {
-                  "url": "https://tiez.name666.top/**"
+                  "url": "https://github.com/Duojiyi/tiez-clipboard/**"
                 },
                 {
-                  "url": "https://github.com/jimuzhe/tie-z/**"
+                  "url": "https://api.github.com/repos/Duojiyi/tiez-clipboard/**"
                 }
               ]
             },

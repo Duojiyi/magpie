@@ -1,7 +1,15 @@
 import type { StoreTheme, ThemeListResponse, ThemeSort } from "./types";
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "https://tiez.name666.top";
+// 主题商店后端 API。默认未配置时所有请求会抛出 not_configured 错误，
+// theme-store 面板将显示空列表/失败提示，不向上游服务器发请求。
+// 如需启用：构建时设置 VITE_API_BASE_URL，或自行部署兼容服务。
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+
+function ensureConfigured() {
+  if (!API_BASE) {
+    throw new Error("theme_store_not_configured");
+  }
+}
 
 function getToken(): string | null {
   return localStorage.getItem("tiez_theme_store_token");
@@ -16,6 +24,7 @@ export async function register(
   username: string,
   password: string
 ): Promise<{ token: string; username: string }> {
+  ensureConfigured();
   const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -33,6 +42,7 @@ export async function login(
   username: string,
   password: string
 ): Promise<{ token: string; username: string }> {
+  ensureConfigured();
   const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -54,6 +64,7 @@ export async function fetchThemes(params: {
   q?: string;
   token?: string;
 }): Promise<ThemeListResponse> {
+  ensureConfigured();
   const searchParams = new URLSearchParams();
   if (params.page) searchParams.set("page", String(params.page));
   if (params.limit) searchParams.set("limit", String(params.limit));
@@ -73,6 +84,7 @@ export async function fetchThemes(params: {
 }
 
 export async function fetchThemeDetail(id: string): Promise<StoreTheme> {
+  ensureConfigured();
   const res = await fetch(`${API_BASE}/api/v1/themes/${id}`, {
     headers: authHeaders(),
     signal: AbortSignal.timeout(10000),
@@ -82,6 +94,7 @@ export async function fetchThemeDetail(id: string): Promise<StoreTheme> {
 }
 
 export async function fetchThemeCSS(id: string): Promise<string> {
+  ensureConfigured();
   const res = await fetch(`${API_BASE}/api/v1/themes/${id}/css`, {
     signal: AbortSignal.timeout(10000),
   });
@@ -90,10 +103,12 @@ export async function fetchThemeCSS(id: string): Promise<string> {
 }
 
 export function getPreviewUrl(id: string, type: "light" | "dark"): string {
+  if (!API_BASE) return "";
   return `${API_BASE}/api/v1/themes/${id}/preview/${type}`;
 }
 
 export async function uploadTheme(file: File): Promise<StoreTheme> {
+  ensureConfigured();
   const formData = new FormData();
   formData.append("file", file);
 
@@ -114,6 +129,7 @@ export async function rateTheme(
   id: string,
   score: number
 ): Promise<{ avgRating: number; ratingCount: number }> {
+  ensureConfigured();
   const res = await fetch(`${API_BASE}/api/v1/themes/${id}/rate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -128,6 +144,7 @@ export async function rateTheme(
 }
 
 export async function deleteTheme(id: string): Promise<void> {
+  ensureConfigured();
   const res = await fetch(`${API_BASE}/api/v1/themes/${id}`, {
     method: "DELETE",
     headers: authHeaders(),

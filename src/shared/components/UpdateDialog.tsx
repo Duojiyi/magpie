@@ -33,7 +33,7 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({
   }, [isOpen]);
 
   const handleOpenWebsite = () => {
-    openUrl("https://tiez.name666.top/");
+    openUrl("https://github.com/Duojiyi/tiez-clipboard/releases/latest");
   };
 
   return (

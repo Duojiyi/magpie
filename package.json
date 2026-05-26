@@ -1,7 +1,7 @@
 {
   "name": "tiez-app",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.3.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev --features devtools",
     "tauri:build": "tauri build",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "tauri:build:mac-arm": "tauri build --target aarch64-apple-darwin",
     "tauri:build:mac-intel": "PATH=\"$HOME/.cargo/bin:$PATH\" RUSTUP_HOME=\"$HOME/.rustup\" CARGO_HOME=\"$HOME/.cargo\" RUSTUP_TOOLCHAIN=stable-aarch64-apple-darwin tauri build --target x86_64-apple-darwin",
     "release": "set -a && . ./.env && set +a && tauri build",

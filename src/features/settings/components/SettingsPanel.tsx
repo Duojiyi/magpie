@@ -280,7 +280,6 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         aiProfiles, setAiProfiles, aiAssignedProfileTask, setAiAssignedProfileTask, aiAssignedProfileMouthpiece, setAiAssignedProfileMouthpiece, aiAssignedProfileTranslate, setAiAssignedProfileTranslate
     } = props;
 
-    const [emailCopied, setEmailCopied] = useState(false);
     const [appVersion, setAppVersion] = useState("");
     const [mqttStatus, setMqttStatus] = useState<"connected" | "disconnected" | "connecting">("disconnected");
     const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatusPayload>({
@@ -790,8 +789,6 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setUpdateStatus={setUpdateStatus}
                 // Removed setUpdateModalData
                 onResetSettings={handleResetSettings}
-                emailCopied={emailCopied}
-                setEmailCopied={setEmailCopied}
             />
 
             <AiProfileModal
