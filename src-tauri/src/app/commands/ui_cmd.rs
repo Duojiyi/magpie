@@ -58,6 +58,51 @@ pub fn send_system_notification(app: AppHandle, title: String, body: String) -> 
     Ok(())
 }
 
+/// 旧主题别名归一（与前端 `LEGACY_THEME_MAP` 语义一致，权威见设计文档表 4.1）。
+///
+/// 映射规则：`mica`/`sakura`→`mist`、`acrylic`→`dusk`、`retro`→`ink`、
+/// `sticky-note`→`paper`；新主题（`ink`/`paper`/`mist`/`dusk`）原样返回；
+/// `store-*` 前缀、空串及任意未知值一律落到默认主题 `ink`。
+pub(crate) fn normalize_theme_id(theme: &str) -> &str {
+    match theme {
+        "mica" | "sakura" => "mist",
+        "acrylic" => "dusk",
+        "retro" => "ink",
+        "sticky-note" => "paper",
+        "ink" | "paper" | "mist" | "dusk" => theme,
+        t if t.starts_with("store-") => "ink",
+        _ => "ink", // 未知（含空串）一律落默认
+    }
+}
+
+/// 玻璃主题判定：仅归一后为 `mist` / `dusk` 时触发 DWM vibrancy。
+/// 取代原 `theme == "mica" || theme == "acrylic"` 的散落硬编码。
+pub(crate) fn is_glass_theme(theme: &str) -> bool {
+    matches!(normalize_theme_id(theme), "mist" | "dusk")
+}
+
+/// 玻璃主题的 acrylic 着色（RGBA），用于 `apply_acrylic`。
+///
+/// mist 取浅青瓷色（暗色模式下转深青瓷），dusk 取深梅紫炭色。
+/// 非玻璃主题不会调用此函数，兜底返回中性浅灰。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn glass_tint(theme: &str, is_dark: bool) -> (u8, u8, u8, u8) {
+    match (normalize_theme_id(theme), is_dark) {
+        ("mist", false) => (228, 238, 234, 160), // 浅青瓷
+        ("mist", true) => (30, 40, 38, 150),      // 深青瓷
+        ("dusk", _) => (38, 32, 46, 180),         // 深梅紫炭
+        _ => (240, 240, 240, 40),                 // 兜底中性浅灰
+    }
+}
+
+/// 施加玻璃主题的 acrylic 效果；失败时记录中文日志并忽略，窗口退化为不透明实色不崩溃。
+#[cfg(target_os = "windows")]
+fn apply_glass_effect(window: &WebviewWindow, theme: &str, is_dark: bool) {
+    if let Err(err) = window_vibrancy::apply_acrylic(window, Some(glass_tint(theme, is_dark))) {
+        eprintln!("[主题] 应用 acrylic 玻璃效果失败（{theme}），窗口退化为不透明实色背景: {err}");
+    }
+}
+
 #[tauri::command]
 pub fn set_theme(
     window: WebviewWindow,
@@ -67,6 +112,9 @@ pub fn set_theme(
     color_mode: Option<String>,
     show_app_border: Option<bool>,
 ) -> AppResult<()> {
+    // 先归一主题：接收旧别名/未知值也能正确分派，并以新主题值持久化与广播
+    let theme = normalize_theme_id(&theme).to_string();
+
     let mut effective_color_mode = color_mode.clone();
     if effective_color_mode
         .as_deref()
@@ -150,31 +198,24 @@ pub fn set_theme(
 
         let build = windows_version::OsVersion::current().build;
         let is_win11 = build >= 22000;
-        let is_win10_1803 = build >= 17134;
-        let is_win10 = build >= 10240 && build < 22000;
+        // 支持 acrylic 的最低 Win10 版本（1803 / build 17134）。Win11（≥22000）天然满足。
+        let supports_acrylic = build >= 17134;
 
         match theme.as_str() {
-            "mica" if is_win11 => {
-                let _ = window_vibrancy::apply_mica(&window, Some(is_dark));
+            // 玻璃主题 mist：Win11 与支持 acrylic 的 Win10（1803+）施加带主题色 tint 的 acrylic
+            "mist" if supports_acrylic => {
+                apply_glass_effect(&window, "mist", is_dark);
                 let _ = window.set_shadow(show_border);
             }
-            "acrylic" if is_win10_1803 && !is_win10 => {
-                let _ = window_vibrancy::apply_acrylic(
-                    &window,
-                    Some(if is_dark {
-                        (30, 30, 30, 40)
-                    } else {
-                        (240, 240, 240, 40)
-                    }),
-                );
+            // 玻璃主题 dusk：同上，使用深梅紫炭 tint
+            "dusk" if supports_acrylic => {
+                apply_glass_effect(&window, "dusk", is_dark);
                 let _ = window.set_shadow(show_border);
             }
-            "acrylic" if is_win10 => {
-                let _ = window.set_shadow(false);
-            }
+            // 扁平主题 ink / paper（及玻璃主题在不支持 acrylic 的旧系统上降级）：
+            // 已 clear_vibrancy，使用不透明实色 + 阴影
             _ => {
-                let _ = window
-                    .set_shadow(show_border && is_win11 && theme != "mica" && theme != "acrylic");
+                let _ = window.set_shadow(show_border && is_win11 && !is_glass_theme(&theme));
             }
         }
     }
@@ -188,7 +229,7 @@ pub fn set_theme(
         };
 
         let _ = window_vibrancy::clear_vibrancy(&window);
-        if theme == "mica" || theme == "acrylic" {
+        if is_glass_theme(&theme) {
             let _ = window_vibrancy::apply_vibrancy(
                 &window,
                 window_vibrancy::NSVisualEffectMaterial::HudWindow,
@@ -200,4 +241,149 @@ pub fn set_theme(
 
     let _ = window.emit("theme-changed", theme);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_glass_theme, normalize_theme_id};
+
+    /// `normalize_theme_id`：旧别名按表 4.1 精确映射为新主题。
+    #[test]
+    fn normalize_legacy_aliases() {
+        assert_eq!(normalize_theme_id("mica"), "mist");
+        assert_eq!(normalize_theme_id("sakura"), "mist");
+        assert_eq!(normalize_theme_id("acrylic"), "dusk");
+        assert_eq!(normalize_theme_id("retro"), "ink");
+        assert_eq!(normalize_theme_id("sticky-note"), "paper");
+    }
+
+    /// `normalize_theme_id`：新主题值原样返回。
+    #[test]
+    fn normalize_new_themes_unchanged() {
+        assert_eq!(normalize_theme_id("ink"), "ink");
+        assert_eq!(normalize_theme_id("paper"), "paper");
+        assert_eq!(normalize_theme_id("mist"), "mist");
+        assert_eq!(normalize_theme_id("dusk"), "dusk");
+    }
+
+    /// `normalize_theme_id`：`store-*` 前缀一律落默认 `ink`。
+    #[test]
+    fn normalize_store_prefix_to_ink() {
+        assert_eq!(normalize_theme_id("store-"), "ink");
+        assert_eq!(normalize_theme_id("store-123"), "ink");
+        assert_eq!(normalize_theme_id("store-dark-neon"), "ink");
+    }
+
+    /// `normalize_theme_id`：空串与未知值一律落默认 `ink`。
+    #[test]
+    fn normalize_empty_and_unknown_to_ink() {
+        assert_eq!(normalize_theme_id(""), "ink");
+        assert_eq!(normalize_theme_id("unknown"), "ink");
+        assert_eq!(normalize_theme_id("Mica"), "ink"); // 区分大小写，非精确匹配落默认
+        assert_eq!(normalize_theme_id("ink-extra"), "ink");
+    }
+
+    /// `normalize_theme_id`：满足幂等性——结果集合恒为 4 套新主题之一。
+    #[test]
+    fn normalize_is_idempotent() {
+        for input in [
+            "mica",
+            "sakura",
+            "acrylic",
+            "retro",
+            "sticky-note",
+            "paper",
+            "ink",
+            "mist",
+            "dusk",
+            "store-x",
+            "",
+            "unknown",
+        ] {
+            let once = normalize_theme_id(input);
+            assert_eq!(normalize_theme_id(once), once, "幂等性失败: {input}");
+            assert!(
+                matches!(once, "ink" | "paper" | "mist" | "dusk"),
+                "归一结果不在新主题集合内: {input} -> {once}"
+            );
+        }
+    }
+
+    /// `is_glass_theme`：仅 mist/dusk（含其旧别名）为真。
+    #[test]
+    fn glass_only_for_mist_and_dusk() {
+        // 新玻璃主题
+        assert!(is_glass_theme("mist"));
+        assert!(is_glass_theme("dusk"));
+        // 玻璃主题的旧别名（mica/sakura→mist、acrylic→dusk）
+        assert!(is_glass_theme("mica"));
+        assert!(is_glass_theme("sakura"));
+        assert!(is_glass_theme("acrylic"));
+    }
+
+    /// `is_glass_theme`：扁平主题（含旧别名）与未知/空值均为假。
+    #[test]
+    fn flat_and_unknown_are_not_glass() {
+        // 新扁平主题
+        assert!(!is_glass_theme("ink"));
+        assert!(!is_glass_theme("paper"));
+        // 扁平主题的旧别名（retro→ink、sticky-note→paper）
+        assert!(!is_glass_theme("retro"));
+        assert!(!is_glass_theme("sticky-note"));
+        // store-* / 空串 / 未知值
+        assert!(!is_glass_theme("store-foo"));
+        assert!(!is_glass_theme(""));
+        assert!(!is_glass_theme("unknown"));
+    }
+
+    /// Property 3: 前后端判定一致
+    /// **Validates: Requirements 4.1, 4.2, 4.3**
+    ///
+    /// 以共享测试向量表（前后端唯一权威输入源，前端 glassParity.test.ts 读取同一文件）
+    /// 驱动后端 `is_glass_theme` 对照：逐向量断言后端结果等于向量期望 `expectedGlass`，
+    /// 且 `expectedGlass` 仅在归一后为 mist/dusk 时为真。两侧对每个向量结论一致即证前后端判定一致。
+    #[test]
+    fn glass_parity_matches_shared_vectors() {
+        // include_str! 在编译期嵌入同一份 JSON 向量表（路径相对本文件）
+        const VECTORS_JSON: &str = include_str!(
+            "../../../../src/shared/config/__fixtures__/glassThemeVectors.json"
+        );
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(VECTORS_JSON).expect("共享向量表 JSON 解析失败");
+        let vectors = parsed["vectors"]
+            .as_array()
+            .expect("共享向量表缺少 vectors 数组");
+
+        // 断言四类输入均被覆盖（合法值/旧别名/空串/未知值）
+        let mut seen_categories = std::collections::HashSet::new();
+        for v in vectors {
+            seen_categories.insert(v["category"].as_str().expect("向量缺少 category"));
+        }
+        for expected in ["legal", "legacy", "empty", "unknown"] {
+            assert!(
+                seen_categories.contains(expected),
+                "共享向量表未覆盖输入类别: {expected}"
+            );
+        }
+
+        // 逐向量对照
+        for v in vectors {
+            let input = v["input"].as_str().expect("向量 input 必须为字符串");
+            let expected_glass = v["expectedGlass"].as_bool().expect("向量缺少 expectedGlass");
+
+            // 后端判定与向量期望完全一致
+            assert_eq!(
+                is_glass_theme(input),
+                expected_glass,
+                "is_glass_theme({input:?}) 与共享向量期望不一致"
+            );
+            // expectedGlass 当且仅当归一后为 mist/dusk
+            assert_eq!(
+                expected_glass,
+                matches!(normalize_theme_id(input), "mist" | "dusk"),
+                "向量 {input:?} 的 expectedGlass 与归一后 mist/dusk 判定不符"
+            );
+        }
+    }
 }

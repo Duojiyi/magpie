@@ -223,7 +223,7 @@ pub fn save_image_to_file(data_url: &str, data_dir: &std::path::Path) -> Option<
 pub fn seed_defaults(conn: &Connection) -> Result<()> {
     // App settings
     let _ = conn.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.theme', 'mica')",
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.theme', 'ink')",
         [],
     );
     let _ = conn.execute(

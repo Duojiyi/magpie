@@ -4,7 +4,7 @@ import Select from "react-select";
 import type { SingleValue } from "react-select";
 import type { InstalledAppOption } from "../../app/types";
 
-const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { type: string | null, installedApps: InstalledAppOption[], onSelect: (val: string) => void, theme: string, t: (key: string) => string, colorMode: string }) => {
+const AppSelector = ({ type, installedApps, onSelect, t, colorMode }: { type: string | null, installedApps: InstalledAppOption[], onSelect: (val: string) => void, theme: string, t: (key: string) => string, colorMode: string }) => {
     const [recommended, setRecommended] = useState<InstalledAppOption[]>([]);
     const [loading, setLoading] = useState(false);
 
@@ -111,7 +111,6 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
         { label: t('all_apps'), options: otherApps }
     ];
 
-    const isModern = theme !== 'retro';
     const isDarkMode = colorMode === 'dark' || (colorMode === 'system' && document.documentElement.classList.contains('dark-mode'));
 
     return (
@@ -128,11 +127,10 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
             styles={{
                 control: (base) => ({
                     ...base,
-                    background: isModern
-                        ? (isDarkMode ? 'rgba(30,30,30,0.75)' : 'rgba(255,255,255,0.6)')
-                        : (isDarkMode ? '#202020' : '#fff'),
-                    border: isModern ? '1px solid rgba(128,128,128,0.2)' : 'none',
-                    borderRadius: isModern ? '8px' : 0,
+                    // 新主题均为 modern 风格：半透明背景 + 弱描边 + 圆角
+                    background: isDarkMode ? 'rgba(30,30,30,0.75)' : 'rgba(255,255,255,0.6)',
+                    border: '1px solid rgba(128,128,128,0.2)',
+                    borderRadius: '8px',
                     boxShadow: 'none',
                     minHeight: '32px',
                 }),
@@ -142,19 +140,14 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
                 }),
                 menu: (base) => ({
                     ...base,
-                    background: isModern
-                        ? (isDarkMode ? 'rgba(25,25,25,0.95)' : 'rgba(255,255,255,0.95)')
-                        : (isDarkMode ? '#1f1f1f' : '#fff'),
-                    borderRadius: isModern ? '8px' : 0,
-                    border: isModern
-                        ? (isDarkMode ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(128,128,128,0.2)')
-                        : (isDarkMode ? '2px solid #111' : '2px solid #373737'),
-                    backdropFilter: isModern ? 'blur(12px)' : 'none',
+                    // 新主题均为 modern 风格：玻璃质感下拉面板（半透明 + 模糊 + 柔和阴影）
+                    background: isDarkMode ? 'rgba(25,25,25,0.95)' : 'rgba(255,255,255,0.95)',
+                    borderRadius: '8px',
+                    border: isDarkMode ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(128,128,128,0.2)',
+                    backdropFilter: 'blur(12px)',
                     marginTop: '4px',
                     zIndex: 99999,
-                    boxShadow: isModern
-                        ? (isDarkMode ? '0 8px 32px rgba(0,0,0,0.45)' : '0 8px 32px rgba(0,0,0,0.15)')
-                        : (isDarkMode ? '4px 4px 0 #000' : '4px 4px 0 #1a1a1a'),
+                    boxShadow: isDarkMode ? '0 8px 32px rgba(0,0,0,0.45)' : '0 8px 32px rgba(0,0,0,0.15)',
                     maxHeight: '300px',
                 }),
                 menuList: (base) => ({
@@ -164,9 +157,7 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
                 }),
                 option: (base, state) => ({
                     ...base,
-                    background: state.isFocused
-                        ? (isModern ? 'var(--accent-color)' : '#373737')
-                        : 'transparent',
+                    background: state.isFocused ? 'var(--accent-color)' : 'transparent',
                     color: state.isFocused ? '#fff' : (isDarkMode ? '#eaeaea' : 'var(--text-primary)'),
                     cursor: 'pointer',
                     fontFamily: 'inherit',

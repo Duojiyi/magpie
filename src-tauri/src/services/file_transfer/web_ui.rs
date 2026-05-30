@@ -1,85 +1,5 @@
 fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'static str) {
     match theme {
-        "sticky-note" => (
-            r#"
-            --bg-body: #fff4b8;
-            --bg-panel: rgba(255, 249, 211, 0.9);
-            --bg-input: rgba(255, 255, 255, 0.74);
-            --bg-button: rgba(255, 255, 255, 0.3);
-            --border-dark: #c7a35d;
-            --text-primary: #5d4037;
-            --text-secondary: #7a5c50;
-            --accent-color: #f0a70b;
-            --shadow-color: rgba(93, 64, 55, 0.16);
-            --font-mono: "Consolas", "Courier New", monospace;
-            --content-font-family: "Comic Sans MS", "Chalkboard SE", "Segoe Print", "Microsoft YaHei", sans-serif;
-            --radius: 12px;
-            --bubble-received-bg: #fffde7;
-            --panel-border: 1px solid rgba(199, 163, 93, 0.28);
-            --panel-radius: 14px;
-            --panel-shadow: 0 10px 22px rgba(93, 64, 55, 0.08);
-            --input-border: 1px dashed rgba(240, 167, 11, 0.7);
-            --input-radius: 8px;
-            --input-shadow: none;
-            --button-border: none;
-            --button-radius: 999px;
-            --button-shadow: none;
-            --button-active-transform: scale(0.98);
-            --button-active-shadow: none;
-            --button-active-filled-shadow: 0 10px 22px rgba(240, 167, 11, 0.24);
-            --send-button-background: rgba(240, 167, 11, 0.18);
-            --send-button-color: var(--text-primary);
-            --send-button-border: 1px dashed rgba(240, 167, 11, 0.44);
-            --send-button-shadow: 0 10px 22px rgba(240, 167, 11, 0.18);
-            "#,
-            r#"
-            --bg-body: #242427;
-            --bg-panel: rgba(47, 47, 51, 0.9);
-            --bg-input: rgba(255, 255, 255, 0.08);
-            --bg-button: rgba(255, 255, 255, 0.06);
-            --border-dark: rgba(255, 212, 77, 0.24);
-            --text-primary: #f2eee3;
-            --text-secondary: #d0c7b5;
-            --accent-color: #ffd44d;
-            --shadow-color: rgba(0, 0, 0, 0.28);
-            --bubble-received-bg: #3a3a3c;
-            --panel-border: 1px solid rgba(255, 212, 77, 0.16);
-            --panel-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
-            --input-border: 1px dashed rgba(255, 212, 77, 0.42);
-            --send-button-background: rgba(255, 212, 77, 0.14);
-            --send-button-border: 1px dashed rgba(255, 212, 77, 0.3);
-            --send-button-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
-            "#,
-            r#"
-            body.theme-sticky-note {{
-                background-color: var(--bg-body);
-                background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(255, 243, 188, 0.22));
-                background-size: 100% 100%;
-            }}
-            body.theme-sticky-note.dark-mode {{
-                background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.22));
-            }}
-            @media (prefers-color-scheme: dark) {{
-                body.theme-sticky-note:not(.light-mode) {{
-                    background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.22));
-                }}
-            }}
-            .theme-sticky-note .avatar,
-            .theme-sticky-note .bubble,
-            .theme-sticky-note .text-input,
-            .theme-sticky-note .retro-btn {
-                border-style: solid !important;
-            }
-            .theme-sticky-note .message.received .bubble {
-                transform: rotate(-0.5deg);
-                box-shadow: 2px 2px 0 var(--shadow-color);
-            }
-            .theme-sticky-note .message.sent .bubble {
-                transform: rotate(0.8deg);
-                box-shadow: -2px 2px 0 var(--shadow-color);
-            }
-            "#,
-        ),
         "paper" => (
             r#"
             --bg-body: #f4ecd8;
@@ -148,99 +68,101 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
             }}
             "#,
         ),
-        "mica" => (
+        // 晨雾 mist（液态玻璃·浅）：雾绿强调色，玻璃质感由 .theme-glass 选择器统一驱动
+        "mist" => (
             r#"
-            --bg-body: #f3f3f3;
+            --bg-body: #eef3f1;
             --bg-panel: rgba(255, 255, 255, 0.48);
             --bg-input: rgba(255, 255, 255, 0.74);
             --bg-button: rgba(255, 255, 255, 0.46);
-            --border-dark: rgba(128, 128, 128, 0.18);
-            --text-primary: #1a2435;
-            --text-secondary: #607188;
-            --accent-color: #4f7dff;
-            --shadow-color: rgba(15, 23, 42, 0.1);
+            --border-dark: rgba(78, 140, 125, 0.18);
+            --text-primary: #1f2a27;
+            --text-secondary: #5a6c66;
+            --accent-color: #4e8c7d;
+            --shadow-color: rgba(31, 42, 39, 0.1);
             --font-mono: system-ui, -apple-system, sans-serif;
             --radius: 12px;
             --bubble-received-bg: rgba(255, 255, 255, 0.9);
             --panel-border: 1px solid rgba(255, 255, 255, 0.3);
-            --send-button-background: #4f7dff;
+            --send-button-background: #4e8c7d;
             --send-button-color: #ffffff;
             "#,
             r#"
-            --bg-body: #1a1a1a;
-            --bg-panel: rgba(36, 36, 36, 0.52);
+            --bg-body: #1a1f1d;
+            --bg-panel: rgba(36, 42, 40, 0.52);
             --bg-input: rgba(255, 255, 255, 0.12);
-            --bg-element: rgba(45, 45, 45, 0.65);
+            --bg-element: rgba(45, 52, 50, 0.65);
             --bg-button: rgba(255, 255, 255, 0.05);
-            --text-primary: #e8e8e8;
-            --text-secondary: #a8a8a8;
-            --accent-color: #4f7dff;
+            --text-primary: #e8eeec;
+            --text-secondary: #a8b2af;
+            --accent-color: #6fa897;
             --border-dark: rgba(255, 255, 255, 0.08);
-            --bubble-received-bg: rgba(40, 40, 40, 0.9);
-            --send-button-background: #4f7dff;
+            --bubble-received-bg: rgba(40, 46, 44, 0.9);
+            --send-button-background: #6fa897;
             --send-button-color: #ffffff;
             "#,
             r#"
-            .theme-mica header, .theme-mica footer {{
-                backdrop-filter: blur(20px) saturate(180%);
-                -webkit-backdrop-filter: blur(20px) saturate(180%);
+            .theme-glass header, .theme-glass footer {{
+                backdrop-filter: blur(16px) saturate(180%);
+                -webkit-backdrop-filter: blur(16px) saturate(180%);
             }}
-            .theme-mica .message.received .bubble {{
+            .theme-glass .message.received .bubble {{
                 backdrop-filter: blur(10px);
                 -webkit-backdrop-filter: blur(10px);
             }}
-            .theme-mica .retro-btn.send-btn {{
+            .theme-glass .retro-btn.send-btn {{
                 background: var(--send-button-background);
                 color: var(--send-button-color);
                 border: none;
-                box-shadow: 0 4px 12px rgba(79, 125, 255, 0.3);
+                box-shadow: 0 4px 12px rgba(78, 140, 125, 0.3);
             }}
             "#,
         ),
-        "acrylic" => (
+        // 暮山 dusk（液态玻璃·深）：黄铜强调色，玻璃质感由 .theme-glass 选择器统一驱动
+        "dusk" => (
             r#"
-            --bg-body: #f3f3f3;
+            --bg-body: #f1ede6;
             --bg-panel: rgba(255, 255, 255, 0.34);
             --bg-input: rgba(255, 255, 255, 0.52);
             --bg-button: rgba(255, 255, 255, 0.2);
-            --border-dark: rgba(255, 255, 255, 0.32);
-            --text-primary: #162234;
-            --text-secondary: #607188;
-            --accent-color: #4f7dff;
-            --shadow-color: rgba(15, 23, 42, 0.08);
+            --border-dark: rgba(201, 162, 107, 0.32);
+            --text-primary: #2a2420;
+            --text-secondary: #6b6258;
+            --accent-color: #c9a26b;
+            --shadow-color: rgba(42, 36, 32, 0.08);
             --font-mono: system-ui, -apple-system, sans-serif;
             --radius: 10px;
             --bubble-received-bg: rgba(255, 255, 255, 0.4);
-            --send-button-background: #4f7dff;
-            --send-button-color: #ffffff;
+            --send-button-background: #c9a26b;
+            --send-button-color: #2a2420;
             "#,
             r#"
-            --bg-body: #141414;
-            --bg-panel: rgba(28, 28, 28, 0.38);
+            --bg-body: #1a1620;
+            --bg-panel: rgba(28, 24, 32, 0.38);
             --bg-input: rgba(255, 255, 255, 0.12);
             --bg-button: rgba(255, 255, 255, 0.06);
             --border-dark: rgba(255, 255, 255, 0.12);
-            --text-primary: #e8e8e8;
-            --text-secondary: #b2b2b2;
-            --accent-color: #4f7dff;
-            --bubble-received-bg: rgba(45, 45, 45, 0.42);
-            --send-button-background: #4f7dff;
-            --send-button-color: #ffffff;
+            --text-primary: #ece6dd;
+            --text-secondary: #b2a89c;
+            --accent-color: #c9a26b;
+            --bubble-received-bg: rgba(45, 40, 50, 0.42);
+            --send-button-background: #c9a26b;
+            --send-button-color: #1a1620;
             "#,
             r#"
-            .theme-acrylic header, .theme-acrylic footer {{
-                backdrop-filter: blur(30px) saturate(145%);
-                -webkit-backdrop-filter: blur(30px) saturate(145%);
+            .theme-glass header, .theme-glass footer {{
+                backdrop-filter: blur(16px) saturate(145%);
+                -webkit-backdrop-filter: blur(16px) saturate(145%);
             }}
-            .theme-acrylic .message.received .bubble {{
+            .theme-glass .message.received .bubble {{
                 backdrop-filter: blur(15px);
                 -webkit-backdrop-filter: blur(15px);
             }}
-            .theme-acrylic .retro-btn.send-btn {{
+            .theme-glass .retro-btn.send-btn {{
                 background: var(--send-button-background);
                 color: var(--send-button-color);
                 border: none;
-                box-shadow: 0 4px 12px rgba(79, 125, 255, 0.3);
+                box-shadow: 0 4px 12px rgba(201, 162, 107, 0.3);
             }}
             "#,
         ),
@@ -303,6 +225,26 @@ fn file_transfer_theme_variants(theme: &str) -> (&'static str, &'static str, &'s
     }
 }
 
+/// 旧主题别名归一（语义同设计文档表 4.1）：
+/// mica/sakura→mist、acrylic→dusk、retro→ink、sticky-note→paper，
+/// ink/paper/mist/dusk 原样返回，store-* 与未知值一律落默认 ink。
+fn normalize_theme_id(theme: &str) -> &str {
+    match theme {
+        "mica" | "sakura" => "mist",
+        "acrylic" => "dusk",
+        "retro" => "ink",
+        "sticky-note" => "paper",
+        "ink" | "paper" | "mist" | "dusk" => theme,
+        t if t.starts_with("store-") => "ink",
+        _ => "ink",
+    }
+}
+
+/// 玻璃主题判定：仅归一后为 mist / dusk 时为真，用于追加 theme-glass class。
+fn is_glass_theme(theme: &str) -> bool {
+    matches!(normalize_theme_id(theme), "mist" | "dusk")
+}
+
 fn file_transfer_theme_css(theme: &str, color_mode: &str) -> String {
     let (light, dark, extra) = file_transfer_theme_variants(theme);
     let dark_css = match color_mode {
@@ -315,12 +257,16 @@ fn file_transfer_theme_css(theme: &str, color_mode: &str) -> String {
 }
 
 pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String {
+    // 先将原始（可能为旧别名）主题值归一为新主题集合，再据此生成 CSS 与 body class
+    let theme = normalize_theme_id(theme);
     let theme_css = file_transfer_theme_css(theme, color_mode);
     let mode_class = match color_mode {
         "dark" => "dark-mode",
         "light" => "light-mode",
         _ => "",
     };
+    // 玻璃主题（mist/dusk）追加 theme-glass 语义 class，驱动统一的玻璃样式分支
+    let glass_class = if is_glass_theme(theme) { "theme-glass" } else { "" };
 
     format!(
         r#"
@@ -347,25 +293,25 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         }}
 
         @media (prefers-color-scheme: dark) {{
-            .theme-mica, .theme-acrylic {{
+            .theme-glass {{
                 --bg-body: #101010;
                 --bg-panel: #1c1c1c;
-                --border-dark: rgba(255,255,255,0.08); /* Fainter border */
+                --border-dark: rgba(255,255,255,0.08); /* 弱化边框 */
                 --text-primary: #e0e0e0;
                 --shadow-color: rgba(0,0,0,0.5);
             }}
-            :root:not(.theme-mica):not(.theme-acrylic) {{
-                --bg-body: #121212; /* Slightly cooler black */
+            :root:not(.theme-glass) {{
+                --bg-body: #121212; /* 略偏冷的黑 */
                 --bg-panel: #1e1e1e;
-                --border-dark: #2a2a2a; /* Dark gray instead of pure black for borders */
+                --border-dark: #2a2a2a; /* 用深灰替代纯黑做边框 */
                 --text-primary: #e0e0e0; 
                 --shadow-color: #000000;
                 --bubble-received-bg: var(--bg-panel);
             }}
         }}
 
-        /* Theme mica / acrylic overrides */
-        .theme-mica, .theme-acrylic {{
+        /* 玻璃主题（mist / dusk）公共覆盖 */
+        .theme-glass {{
             --bg-body: #f3f3f3;
             --bg-panel: #ffffff;
             --border-dark: rgba(0,0,0,0.1);
@@ -377,7 +323,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         }}
 
         @media (prefers-color-scheme: dark) {{
-            .theme-mica, .theme-acrylic {{
+            .theme-glass {{
                 --bg-body: #1a1a1a;
                 --bg-panel: #2a2a2a;
                 --text-primary: #e0e0e0;
@@ -415,12 +361,12 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             flex-shrink: 0;
             z-index: 10;
         }}
-        .theme-mica header, .theme-acrylic header {{
-            background: rgba(255,255,255,0.7); backdrop-filter: blur(20px);
+        .theme-glass header {{
+            background: rgba(255,255,255,0.7); backdrop-filter: blur(16px);
             border-bottom: 1px solid rgba(0,0,0,0.1);
         }}
         @media (prefers-color-scheme: dark) {{
-            .theme-mica header, .theme-acrylic header {{ background: rgba(30,30,30,0.7); }}
+            .theme-glass header {{ background: rgba(30,30,30,0.7); }}
         }}
 
         h1 {{ font-size: 18px; font-weight: 900; margin: 0; letter-spacing: -0.5px; }}
@@ -457,7 +403,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         }}
         .avatar img {{ width: 100%; height: 100%; object-fit: cover; }}
         
-        .theme-mica .avatar, .theme-acrylic .avatar {{
+        .theme-glass .avatar {{
             box-shadow: none; border-width: 1px;
         }}
 
@@ -474,53 +420,49 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
         .message.received .bubble {{ background: var(--bubble-received-bg); }}
         .message.sent .bubble {{ background: var(--accent-color); color: #fff; border-color: var(--border-dark); }}
         
-        /* Mica Style Bubbles */
-        .theme-mica .bubble, .theme-acrylic .bubble {{
+        /* 玻璃主题气泡样式 */
+        .theme-glass .bubble {{
             box-shadow: 0 2px 10px var(--shadow-color);
             border: 1px solid var(--border-dark);
             border-radius: 12px;
         }}
-        .theme-mica .message.received .bubble, .theme-acrylic .message.received .bubble {{
+        .theme-glass .message.received .bubble {{
              background: var(--bubble-received-bg);
              backdrop-filter: blur(10px);
         }}
 
-        /* Triangle tail for retro style only */
-        :root:not(.theme-mica):not(.theme-acrylic) .message.received .bubble::after {{
+        /* 三角气泡尾仅扁平主题使用 */
+        :root:not(.theme-glass) .message.received .bubble::after {{
             content: ''; position: absolute; left: -10px; top: 10px;
             width: 0; height: 0; border: 5px solid transparent;
             border-right-color: var(--bubble-received-bg);
         }}
-        :root:not(.theme-mica):not(.theme-acrylic) .message.received .bubble::before {{
+        :root:not(.theme-glass) .message.received .bubble::before {{
             content: ''; position: absolute; left: -13px; top: 9px;
             width: 0; height: 0; border: 6px solid transparent;
             border-right-color: var(--border-dark);
         }}
-        :root:not(.theme-mica):not(.theme-acrylic) .message.sent .bubble::after {{
+        :root:not(.theme-glass) .message.sent .bubble::after {{
             content: ''; position: absolute; right: -10px; top: 10px;
             width: 0; height: 0; border: 5px solid transparent;
             border-left-color: var(--accent-color);
         }}
-        :root:not(.theme-mica):not(.theme-acrylic) .message.sent .bubble::before {{
+        :root:not(.theme-glass) .message.sent .bubble::before {{
             content: ''; position: absolute; right: -13px; top: 9px;
             width: 0; height: 0; border: 6px solid transparent;
             border-left-color: var(--border-dark);
         }}
         
-        /* Mica doesn't use these triangles */
-        .theme-mica .message.received .bubble::before,
-        .theme-acrylic .message.received .bubble::before {{ border-right-color: var(--border-dark); }}
-        .theme-mica .message.received .bubble::after,
-        .theme-acrylic .message.received .bubble::after {{ border-right-color: var(--bubble-received-bg); }}
+        /* 玻璃主题不使用三角尾 */
+        .theme-glass .message.received .bubble::before {{ border-right-color: var(--border-dark); }}
+        .theme-glass .message.received .bubble::after {{ border-right-color: var(--bubble-received-bg); }}
         
         @media (prefers-color-scheme: dark) {{
-            .theme-mica .message.received .bubble, .theme-acrylic .message.received .bubble {{ background: var(--bubble-received-bg); }}
+            .theme-glass .message.received .bubble {{ background: var(--bubble-received-bg); }}
         }}
 
-        .theme-mica .message.sent .bubble::before,
-        .theme-acrylic .message.sent .bubble::before {{ display: none; }}
-        .theme-mica .message.sent .bubble::after,
-        .theme-acrylic .message.sent .bubble::after {{ 
+        .theme-glass .message.sent .bubble::before {{ display: none; }}
+        .theme-glass .message.sent .bubble::after {{ 
             border-left-color: var(--accent-color) !important; 
             right: -7px; 
             bottom: 10px;
@@ -569,12 +511,12 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             flex-shrink: 0;
             z-index: 10;
         }}
-        .theme-mica footer, .theme-acrylic footer {{
-            background: rgba(255,255,255,0.7); backdrop-filter: blur(20px);
+        .theme-glass footer {{
+            background: rgba(255,255,255,0.7); backdrop-filter: blur(16px);
             border-top: 1px solid rgba(0,0,0,0.1);
         }}
         @media (prefers-color-scheme: dark) {{
-            .theme-mica footer, .theme-acrylic footer {{ background: rgba(30,30,30,0.7); }}
+            .theme-glass footer {{ background: rgba(30,30,30,0.7); }}
         }}
         
         .retro-btn {{
@@ -593,12 +535,12 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             box-shadow: var(--button-active-shadow, 0 0 0 0 var(--shadow-color));
         }}
         
-        .theme-mica .retro-btn, .theme-acrylic .retro-btn {{
+        .theme-glass .retro-btn {{
             box-shadow: none; border-width: 1px;
             background: rgba(255,255,255,0.5);
         }}
         @media (prefers-color-scheme: dark) {{
-            .theme-mica .retro-btn, .theme-acrylic .retro-btn {{ background: rgba(255,255,255,0.1); }}
+            .theme-glass .retro-btn {{ background: rgba(255,255,255,0.1); }}
         }}
 
         .add-btn {{ width: 40px; font-size: 24px; font-weight: 900; }}
@@ -620,27 +562,27 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             border-radius: var(--input-radius, var(--radius)); -webkit-appearance: none;
             resize: none; overflow-y: auto; line-height: 20px;
         }}
-        .theme-mica .text-input, .theme-acrylic .text-input {{ box-shadow: none; border-width: 1px; }}
+        .theme-glass .text-input {{ box-shadow: none; border-width: 1px; }}
         @media (prefers-color-scheme: dark) {{
-            .theme-mica .text-input, .theme-acrylic .text-input {{ background: rgba(255,255,255,0.05); color: #fff; }}
+            .theme-glass .text-input {{ background: rgba(255,255,255,0.05); color: #fff; }}
 
-            /* Retro Dark Mode Overrides */
-            :root:not(.theme-mica):not(.theme-acrylic) .retro-btn {{
+            /* 扁平主题暗色覆盖 */
+            :root:not(.theme-glass) .retro-btn {{
                 background: #333;
                 border-color: #000;
                 color: #e0e0e0;
                 box-shadow: 2px 2px 0 0 #000;
             }}
-            :root:not(.theme-mica):not(.theme-acrylic) .retro-btn:active {{
+            :root:not(.theme-glass) .retro-btn:active {{
                 box-shadow: none;
                 transform: translate(2px, 2px);
             }}
-            :root:not(.theme-mica):not(.theme-acrylic) .retro-btn.send-btn {{
+            :root:not(.theme-glass) .retro-btn.send-btn {{
                 background: #000;
                 color: #fff;
                 border-color: #000;
             }}
-            :root:not(.theme-mica):not(.theme-acrylic) .text-input {{
+            :root:not(.theme-glass) .text-input {{
                 background: #202020;
                 color: #e0e0e0;
                 border-color: #000;
@@ -663,14 +605,14 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             display: none; flex-direction: column;
             padding: 16px;
         }}
-        .theme-mica #fs-editor, .theme-acrylic #fs-editor {{
-             background: rgba(255,255,255,0.95); backdrop-filter: blur(20px);
+        .theme-glass #fs-editor {{
+             background: rgba(255,255,255,0.95); backdrop-filter: blur(16px);
         }}
         @media (prefers-color-scheme: dark) {{
-            .theme-mica #fs-editor, .theme-acrylic #fs-editor {{ background: rgba(20,20,20,0.95); }}
+            .theme-glass #fs-editor {{ background: rgba(20,20,20,0.95); }}
             
-            /* Retro Dark Mode Overrides for Fullscreen Editor */
-            :root:not(.theme-mica):not(.theme-acrylic) #fs-textarea {{
+            /* 扁平主题全屏编辑器暗色覆盖 */
+            :root:not(.theme-glass) #fs-textarea {{
                 background: #202020;
                 color: #e0e0e0;
                 border: 2px solid #000;
@@ -683,18 +625,18 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             background: #fff; color: var(--text-primary); margin-bottom: 16px;
             border-radius: var(--radius); resize: none; outline: none;
         }}
-        .theme-mica #fs-textarea, .theme-acrylic #fs-textarea {{
+        .theme-glass #fs-textarea {{
             background: rgba(255,255,255,0.5); border-width: 1px; box-shadow: none;
         }}
         @media (prefers-color-scheme: dark) {{
-            .theme-mica #fs-textarea, .theme-acrylic #fs-textarea {{ background: rgba(255,255,255,0.05); color: #fff; }}
+            .theme-glass #fs-textarea {{ background: rgba(255,255,255,0.05); color: #fff; }}
         }}
 
         .fs-toolbar {{ display: flex; justify-content: flex-end; gap: 12px; }}
         {theme_css}
     </style>
 </head>
-<body class="theme-{theme} {mode_class}">
+<body class="theme-{theme} {glass_class} {mode_class}">
     <header>
         <div class="header-status">
             <div class="status-dot"></div>
@@ -1091,6 +1033,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
     "#,
         theme = theme,
         mode_class = mode_class,
+        glass_class = glass_class,
         theme_css = theme_css,
         logo_base64 = logo_base64
     )

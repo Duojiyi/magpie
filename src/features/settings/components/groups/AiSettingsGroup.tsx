@@ -24,7 +24,6 @@ interface AiSettingsGroupProps {
     setAiTargetLang: (val: string) => void;
     aiThinkingBudget: string;
     setAiThinkingBudget: (val: string) => void;
-    theme: string;
 }
 
 const AiSettingsGroup = ({
@@ -48,8 +47,7 @@ const AiSettingsGroup = ({
     aiTargetLang,
     setAiTargetLang,
     aiThinkingBudget,
-    setAiThinkingBudget,
-    theme
+    setAiThinkingBudget
 }: AiSettingsGroupProps) => (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
         <div className="group-header" onClick={onToggle}>
@@ -101,8 +99,9 @@ const AiSettingsGroup = ({
                             padding: '0',
                             marginBottom: '16px',
                             background: 'rgba(0, 0, 0, 0.02)',
-                            borderRadius: theme === 'retro' ? '0' : '8px',
-                            border: theme === 'retro' ? '2px solid var(--border-dark)' : '1px solid rgba(128, 128, 128, 0.1)',
+                            /* 圆角与边框由当前主题的 CSS 变量驱动，避免内联硬编码主题特判 */
+                            borderRadius: 'var(--card-radius)',
+                            border: 'var(--card-border)',
                             overflow: 'hidden'
                         }}>
                             {aiProfiles.map(profile => (

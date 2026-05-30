@@ -13,8 +13,7 @@
   box-sizing: border-box;
 }
 
-.theme-mica.themed-tag-manager,
-.theme-acrylic.themed-tag-manager {
+.theme-glass.themed-tag-manager {
   background: transparent !important;
 }
 
@@ -45,12 +44,10 @@
   width: var(--tm-sidebar-collapsed-width) !important;
 }
 
-.theme-mica .tag-sidebar,
-.theme-mica .tag-content,
-.theme-acrylic .tag-sidebar,
-.theme-acrylic .tag-content {
-  backdrop-filter: blur(18px) saturate(115%);
-  -webkit-backdrop-filter: blur(18px) saturate(115%);
+.theme-glass .tag-sidebar,
+.theme-glass .tag-content {
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
 }
 
 .themed-tag-manager .sidebar-header {

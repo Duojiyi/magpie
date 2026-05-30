@@ -1,0 +1,26 @@
+{
+  "$comment": "Property 3（前后端玻璃判定一致）的共享测试向量表，前端 isGlassTheme 与后端 is_glass_theme 均以本文件为权威输入源对照。expectedGlass = 归一后（设计文档表 4.1）是否为 mist/dusk。input 仅含字符串，因后端 is_glass_theme(&str) 不接收 null。",
+  "vectors": [
+    { "category": "legal", "input": "ink", "expectedGlass": false },
+    { "category": "legal", "input": "paper", "expectedGlass": false },
+    { "category": "legal", "input": "mist", "expectedGlass": true },
+    { "category": "legal", "input": "dusk", "expectedGlass": true },
+
+    { "category": "legacy", "input": "mica", "expectedGlass": true },
+    { "category": "legacy", "input": "acrylic", "expectedGlass": true },
+    { "category": "legacy", "input": "sakura", "expectedGlass": true },
+    { "category": "legacy", "input": "retro", "expectedGlass": false },
+    { "category": "legacy", "input": "sticky-note", "expectedGlass": false },
+
+    { "category": "empty", "input": "", "expectedGlass": false },
+
+    { "category": "unknown", "input": "store-", "expectedGlass": false },
+    { "category": "unknown", "input": "store-dark-neon", "expectedGlass": false },
+    { "category": "unknown", "input": "unknown", "expectedGlass": false },
+    { "category": "unknown", "input": "Mica", "expectedGlass": false },
+    { "category": "unknown", "input": "INK", "expectedGlass": false },
+    { "category": "unknown", "input": "Mist", "expectedGlass": false },
+    { "category": "unknown", "input": "ink-extra", "expectedGlass": false },
+    { "category": "unknown", "input": "glass", "expectedGlass": false }
+  ]
+}

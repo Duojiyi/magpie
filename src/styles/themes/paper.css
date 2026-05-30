@@ -1,204 +1,353 @@
-/* Paper & Quill Theme (纸质书感) */
+/* 宣纸 Paper 主题（扁平·暖编辑）
+ * 米黄宣纸暖色平面视觉，陶土赤陶强调色，无玻璃、无背景纹理层。
+ * 变量族对照 mica.css 完整集合逐项赋值，并新增设计稿要求的语义状态色。
+ * 强调色：浅 #A85638（赤陶）/ 暗 #C46B47（提亮暖陶土）。
+ */
+
+/* ===== 浅色（宣纸暖白） ===== */
 :root.theme-paper,
 body.theme-paper {
-  --bg-body: #f4ecd8;
-  --bg-window: #fdf6e3;
-  --bg-content: #fdf6e3;
-  --bg-toolbar: rgba(244, 236, 216, 0.95);
-  --bg-panel: rgba(255, 253, 247, 0.7);
+  /* —— 背景族（米黄宣纸实色，无透明玻璃） —— */
+  --bg-window: #fbf6ec;
+  --bg-content: #f4ece0;
+  --bg-toolbar: #f4ece0;
+  --bg-panel: #fffbf4;
   --bg-input: #ffffff;
-  --bg-element: #f9f3e4;
-  --bg-button: rgba(139, 90, 43, 0.08);
+  --bg-element: #f7f0e4;
+  --bg-button: #f1e8d8;
 
-  --text-primary: #3c3836;
-  --text-secondary: #7c6f64;
-  --text-muted: #a89984;
+  /* —— 文本族（暖墨褐） —— */
+  --text-primary: #3a332b;
+  --text-secondary: #6b5f50;
+  --text-muted: #9c8e7a;
 
-  --accent-color: #8b5a2b;
-  --accent-color-rgb: 139, 90, 43;
-  --accent-hover: #6d451e;
-  --border-dark: #d5c4a1;
-  --border-light: rgba(213, 196, 161, 0.4);
-  --shadow-color: rgba(60, 56, 54, 0.12);
+  /* —— 强调色族（陶土赤陶） —— */
+  --accent-color: #a85638;
+  --accent-color-rgb: 168, 86, 56;
+  --accent-hover: #8e4529;
+  --accent-soft: rgba(168, 86, 56, 0.12);
+  --accent-glow: rgba(168, 86, 56, 0.35);
 
-  --line-soft: rgba(139, 90, 43, 0.12);
-  --line-strong: rgba(139, 90, 43, 0.25);
-  
-  --shadow-xs: 0 2px 8px rgba(60, 56, 54, 0.05);
-  --shadow-sm: 0 4px 12px rgba(60, 56, 54, 0.08);
-  --shadow-md: 0 8px 24px rgba(60, 56, 54, 0.1);
-  --shadow-lg: 0 12px 36px rgba(60, 56, 54, 0.12);
+  /* —— 语义状态色（新增） —— */
+  --danger: #c0492f;
+  --success: #5c7a4a;
+  --sensitive: #b23a48;
+  --sensitive-soft: rgba(178, 58, 72, 0.12);
+  --sensitive-accent: #b23a48;
+
+  /* —— 扁平主题边线 / 阴影基色 —— */
+  --border-dark: #d8c7a8;
+  --border-light: rgba(216, 199, 168, 0.4);
+  --shadow-color: rgba(58, 51, 43, 0.12);
+  --line-soft: rgba(168, 86, 56, 0.12);
+  --line-strong: rgba(168, 86, 56, 0.26);
+
+  /* —— 阴影族（柔和暖灰投影，扁平不夸张） —— */
+  --shadow-xs: 0 2px 8px rgba(58, 51, 43, 0.05);
+  --shadow-sm: 0 4px 12px rgba(58, 51, 43, 0.08);
+  --shadow-md: 0 8px 24px rgba(58, 51, 43, 0.1);
+  --shadow-lg: 0 12px 36px rgba(58, 51, 43, 0.12);
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 
+  /* —— 字体（宋体衬线，编辑纸感） —— */
   --font-main: "Georgia", "STSong", "SimSun", "Songti SC", serif;
   --font-mono: "Courier New", Courier, monospace;
 
-  --radius-window: 4px;
-  --radius-panel: 2px;
-  --radius-card: 0px;
-  --radius-control: 2px;
+  /* —— 圆角（纸张方正，低圆角） —— */
+  --radius-window: 6px;
+  --radius-panel: 4px;
+  --radius-card: 3px;
+  --radius-control: 3px;
 
-  --shell-background: #fdf6e3;
-  --shell-border: 1px solid #d5c4a1;
-  --shell-shadow: 0 20px 50px rgba(0, 0, 0, 0.1);
+  /* —— 外壳 shell —— */
+  --shell-background: #fbf6ec;
+  --shell-border: 1px solid #d8c7a8;
+  --shell-shadow: 0 20px 50px rgba(58, 51, 43, 0.12);
+  --shell-radius: 6px;
 
-  --toolbar-border: 1px solid rgba(139, 90, 43, 0.2);
+  /* —— 工具栏 —— */
+  --toolbar-border: 1px solid rgba(168, 86, 56, 0.18);
 
+  /* —— 标题 —— */
   --title-font-family: var(--font-main);
   --title-font-weight: 700;
   --title-font-size: 19px;
 
-  --input-border: 1px solid #d5c4a1;
-  --input-radius: 2px;
-  --input-shadow: inset 0 1px 3px rgba(0,0,0,0.03);
-  --input-focus-shadow: 0 0 0 3px rgba(139, 90, 43, 0.1);
+  /* —— 输入框 —— */
+  --input-border: 1px solid #d8c7a8;
+  --input-radius: 3px;
+  --input-shadow: inset 0 1px 3px rgba(58, 51, 43, 0.04);
+  --input-focus-shadow: 0 0 0 3px rgba(168, 86, 56, 0.14);
 
-  --button-border: 1px solid rgba(139, 90, 43, 0.3);
+  /* —— 按钮 —— */
+  --button-border: 1px solid rgba(168, 86, 56, 0.28);
   --button-radius: 4px;
-  --button-shadow: none;
+  --button-shadow: var(--shadow-xs);
   --button-hover-transform: translateY(-1px);
-  --button-hover-shadow: 0 4px 8px rgba(139, 90, 43, 0.15);
+  --button-hover-shadow: 0 4px 10px rgba(168, 86, 56, 0.16);
   --button-active-transform: translateY(0);
-  --button-active-shadow: none;
+  --button-active-shadow: var(--shadow-xs);
+  --button-active-filled-shadow: 0 8px 18px rgba(168, 86, 56, 0.24);
 
-  --card-border: 1px solid #ebdbb2;
-  --card-radius: 0px;
-  --card-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-  --card-hover-shadow: 0 8px 20px rgba(139, 90, 43, 0.1);
+  /* —— 卡片 / 列表条目（含选中签名元素变量） —— */
+  --card-border: 1px solid #e6d8bf;
+  --card-radius: 3px;
+  --card-shadow: 0 1px 4px rgba(58, 51, 43, 0.04);
+  --card-hover-shadow: 0 8px 20px rgba(168, 86, 56, 0.1);
   --card-hover-transform: none;
   --card-active-transform: none;
-  --card-active-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
-  --card-selected-background: #fbf1c7;
-  --card-selected-border-color: #b57614;
-  --card-selected-shadow: 0 4px 12px rgba(139, 90, 43, 0.15);
-  --card-selected-outline: 1px solid #b57614;
+  --card-active-shadow: inset 0 2px 4px rgba(58, 51, 43, 0.05);
+  --card-selected-background: rgba(168, 86, 56, 0.08);
+  --card-selected-border-color: #a85638;
+  --card-selected-shadow: 0 6px 16px rgba(168, 86, 56, 0.18);
+  --card-selected-outline: 1px solid rgba(168, 86, 56, 0.45);
 
-  --panel-border: 1px solid #d5c4a1;
-  --panel-radius: 2px;
-  --panel-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
-  --panel-header-background: #f9f3e4;
-  --panel-divider-color: #d5c4a1;
+  /* —— 面板 —— */
+  --panel-border: 1px solid #d8c7a8;
+  --panel-radius: 4px;
+  --panel-shadow: 0 2px 10px rgba(58, 51, 43, 0.04);
+  --panel-header-background: #f7f0e4;
+  --panel-divider-color: #d8c7a8;
 
-  --data-panel-border: 1px solid #d5c4a1;
+  --data-panel-border: 1px solid #d8c7a8;
   --data-panel-shadow: none;
   --data-panel-hover-background: #ffffff;
 
+  /* —— 分段控件 / 标签 —— */
   --segment-active-background: #ffffff;
-  --segment-active-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --segment-active-shadow: 0 2px 6px rgba(58, 51, 43, 0.08);
 
-  --tags-border: 1px solid #d5c4a1;
+  --tags-border: 1px solid #d8c7a8;
   --tags-shadow: none;
-  --tag-chip-border: 1px solid #d5c4a1;
-  --tag-chip-radius: 2px;
+  --tag-chip-border: 1px solid #d8c7a8;
+  --tag-chip-radius: 3px;
   --tag-chip-shadow: none;
 
-  --menu-border: 1px solid #d5c4a1;
-  --menu-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  /* —— 菜单 —— */
+  --menu-border: 1px solid #d8c7a8;
+  --menu-shadow: 0 10px 25px rgba(58, 51, 43, 0.12);
 
+  /* —— 滚动条 —— */
   --scrollbar-size: 10px;
-  --scrollbar-radius: 0px;
-  --scrollbar-thumb-color: #d5c4a1;
+  --scrollbar-size-thin: 4px;
+  --scrollbar-radius: 3px;
   --scrollbar-track-background: transparent;
+  --scrollbar-track-border-start: none;
+  --scrollbar-thumb-color: #cdb893;
+  --scrollbar-thumb-hover-color: rgba(168, 86, 56, 0.6);
+  --scrollbar-thumb-border: 2px solid transparent;
+  --scrollbar-chat-thumb-border: 2px solid transparent;
 
+  /* —— 队列条 —— */
+  --queue-border: 1px solid #d8c7a8;
+  --queue-shadow: 0 12px 30px rgba(58, 51, 43, 0.12);
+
+  /* —— 重置按钮 —— */
+  --reset-button-border: 1px solid rgba(192, 73, 47, 0.24);
+
+  /* —— 内容排版 —— */
   --content-font-family: var(--font-main);
   --content-line-height: 1.6;
 }
 
-/* Texture effect */
-body.theme-paper::before {
-  content: "";
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  opacity: 0.04;
-  pointer-events: none;
-  z-index: 9999;
-}
-
-.theme-paper .history-item {
-  background-color: transparent !important;
-  background-image: linear-gradient(var(--line-soft) 1px, transparent 1px);
-  background-size: 100% 1.6em;
-  background-attachment: local;
-  padding: 12px !important;
-  border-bottom: 2px solid #d5c4a1 !important;
-  position: relative;
-}
-
-.theme-paper .history-item:hover {
-  background-color: rgba(255, 255, 255, 0.3) !important;
-}
-
-.theme-paper .item-content {
-  margin-left: 0;
-  font-family: var(--font-main);
-}
-
+/* ===== 选中态签名元素（需求 9.1 / 9.2 / 9.3） ===== */
+/* 左缘 3px accent 渐变光脊：由 --card-selected-border-color 起色、--accent-glow 收尾。 */
 .theme-paper .history-item.selected {
-  background-color: #fbf1c7 !important;
+  background: var(--card-selected-background);
+  border-color: var(--card-selected-border-color);
+  box-shadow: var(--card-selected-shadow);
 }
 
-/* Dark Mode Overrides for Paper */
+.theme-paper .history-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 3px 0 0 3px;
+  background: linear-gradient(180deg, var(--card-selected-border-color), var(--accent-glow));
+  pointer-events: none;
+}
+
+/* 选中项操作图标徽章点亮：背景切换为 --accent-soft，描边 --accent-color。 */
+.theme-paper .history-item.selected .item-actions .btn-icon {
+  background: var(--accent-soft);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+/* ===== 暗色（深褐宣纸夜读） ===== */
 @media (prefers-color-scheme: dark) {
   :root.theme-paper:not(.light-mode),
   body.theme-paper:not(.light-mode) {
-    --bg-body: #282828;
-    --bg-window: #32302f;
-    --bg-content: #32302f;
-    --bg-toolbar: rgba(40, 40, 40, 0.95);
-    --bg-panel: rgba(50, 48, 47, 0.8);
-    --bg-input: #1d2021;
-    --bg-element: #3c3836;
-    --bg-button: rgba(213, 196, 161, 0.1);
+    /* —— 背景族 —— */
+    --bg-window: #2a2521;
+    --bg-content: #211d1a;
+    --bg-toolbar: #211d1a;
+    --bg-panel: #332d28;
+    --bg-input: #1d1a17;
+    --bg-element: #38322c;
+    --bg-button: #3f382f;
 
-    --text-primary: #ebdbb2;
-    --text-secondary: #a89984;
-    --text-muted: #928374;
+    /* —— 文本族 —— */
+    --text-primary: #ece3d3;
+    --text-secondary: #b8ab97;
+    --text-muted: #8a7d6a;
 
-    --accent-color: #d79921;
-    --accent-color-rgb: 215, 153, 33;
-    --border-dark: #504945;
-    --border-light: rgba(80, 73, 69, 0.4);
+    /* —— 强调色族（提亮暖陶土 #C46B47） —— */
+    --accent-color: #c46b47;
+    --accent-color-rgb: 196, 107, 71;
+    --accent-hover: #d4805e;
+    --accent-soft: rgba(196, 107, 71, 0.18);
+    --accent-glow: rgba(196, 107, 71, 0.45);
+
+    /* —— 语义状态色 —— */
+    --danger: #e06a52;
+    --success: #8aa56f;
+    --sensitive: #d96577;
+    --sensitive-soft: rgba(217, 101, 119, 0.18);
+    --sensitive-accent: #d96577;
+
+    /* —— 边线 / 阴影 —— */
+    --border-dark: #4c443b;
+    --border-light: rgba(76, 68, 59, 0.4);
     --shadow-color: rgba(0, 0, 0, 0.3);
+    --line-soft: rgba(236, 227, 211, 0.1);
+    --line-strong: rgba(236, 227, 211, 0.2);
+    --shadow-xs: 0 2px 8px rgba(0, 0, 0, 0.22);
+    --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.28);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.34);
+    --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.4);
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
-    --line-soft: rgba(213, 196, 161, 0.08);
-    --panel-header-background: #3c3836;
-    --panel-divider-color: #504945;
+    /* —— 外壳 / 工具栏 —— */
+    --shell-background: #2a2521;
+    --shell-border: 1px solid #4c443b;
+    --shell-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    --toolbar-border: 1px solid rgba(196, 107, 71, 0.2);
 
-    --card-selected-background: rgba(215, 153, 33, 0.15);
-    --card-selected-border-color: rgba(215, 153, 33, 0.3);
-    --data-panel-border: 1px solid #504945;
-    --data-panel-hover-background: #3c3836;
+    /* —— 输入 / 按钮 —— */
+    --input-border: 1px solid #4c443b;
+    --input-focus-shadow: 0 0 0 3px rgba(196, 107, 71, 0.2);
+    --button-border: 1px solid rgba(196, 107, 71, 0.32);
+    --button-hover-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    --button-active-filled-shadow: 0 8px 18px rgba(196, 107, 71, 0.3);
+
+    /* —— 卡片 / 选中签名元素 —— */
+    --card-border: 1px solid #463f37;
+    --card-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    --card-hover-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    --card-selected-background: rgba(196, 107, 71, 0.16);
+    --card-selected-border-color: #c46b47;
+    --card-selected-shadow: 0 6px 16px rgba(196, 107, 71, 0.28);
+    --card-selected-outline: 1px solid rgba(196, 107, 71, 0.5);
+
+    /* —— 面板 / 数据面板 —— */
+    --panel-border: 1px solid #4c443b;
+    --panel-header-background: #38322c;
+    --panel-divider-color: #4c443b;
+    --data-panel-border: 1px solid #4c443b;
+    --data-panel-hover-background: #38322c;
+
+    /* —— 分段 / 标签 / 菜单 —— */
+    --segment-active-background: #38322c;
+    --tags-border: 1px solid #4c443b;
+    --tag-chip-border: 1px solid #4c443b;
+    --menu-border: 1px solid #4c443b;
+    --menu-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+
+    /* —— 滚动条 / 队列 / 重置 —— */
+    --scrollbar-thumb-color: #5a5044;
+    --scrollbar-thumb-hover-color: rgba(196, 107, 71, 0.7);
+    --queue-border: 1px solid #4c443b;
+    --queue-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    --reset-button-border: 1px solid rgba(224, 106, 82, 0.3);
   }
 }
 
 :root.dark-mode.theme-paper,
 body.dark-mode.theme-paper {
-  --bg-body: #282828;
-  --bg-window: #32302f;
-  --bg-content: #32302f;
-  --bg-toolbar: rgba(40, 40, 40, 0.95);
-  --bg-panel: rgba(50, 48, 47, 0.8);
-  --bg-input: #1d2021;
-  --bg-element: #3c3836;
-  --bg-button: rgba(213, 196, 161, 0.1);
+  /* —— 背景族 —— */
+  --bg-window: #2a2521;
+  --bg-content: #211d1a;
+  --bg-toolbar: #211d1a;
+  --bg-panel: #332d28;
+  --bg-input: #1d1a17;
+  --bg-element: #38322c;
+  --bg-button: #3f382f;
 
-  --text-primary: #ebdbb2;
-  --text-secondary: #a89984;
-  --text-muted: #928374;
+  /* —— 文本族 —— */
+  --text-primary: #ece3d3;
+  --text-secondary: #b8ab97;
+  --text-muted: #8a7d6a;
 
-  --accent-color: #d79921;
-  --accent-color-rgb: 215, 153, 33;
-  --border-dark: #504945;
-  --border-light: rgba(80, 73, 69, 0.4);
+  /* —— 强调色族（提亮暖陶土 #C46B47） —— */
+  --accent-color: #c46b47;
+  --accent-color-rgb: 196, 107, 71;
+  --accent-hover: #d4805e;
+  --accent-soft: rgba(196, 107, 71, 0.18);
+  --accent-glow: rgba(196, 107, 71, 0.45);
+
+  /* —— 语义状态色 —— */
+  --danger: #e06a52;
+  --success: #8aa56f;
+  --sensitive: #d96577;
+  --sensitive-soft: rgba(217, 101, 119, 0.18);
+  --sensitive-accent: #d96577;
+
+  /* —— 边线 / 阴影 —— */
+  --border-dark: #4c443b;
+  --border-light: rgba(76, 68, 59, 0.4);
   --shadow-color: rgba(0, 0, 0, 0.3);
+  --line-soft: rgba(236, 227, 211, 0.1);
+  --line-strong: rgba(236, 227, 211, 0.2);
+  --shadow-xs: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.4);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
-  --line-soft: rgba(213, 196, 161, 0.08);
-  --panel-header-background: #3c3836;
-  --panel-divider-color: #504945;
+  /* —— 外壳 / 工具栏 —— */
+  --shell-background: #2a2521;
+  --shell-border: 1px solid #4c443b;
+  --shell-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  --toolbar-border: 1px solid rgba(196, 107, 71, 0.2);
 
-  --card-selected-background: rgba(215, 153, 33, 0.15);
-  --card-selected-border-color: rgba(215, 153, 33, 0.3);
-  --data-panel-border: 1px solid #504945;
-  --data-panel-hover-background: #3c3836;
+  /* —— 输入 / 按钮 —— */
+  --input-border: 1px solid #4c443b;
+  --input-focus-shadow: 0 0 0 3px rgba(196, 107, 71, 0.2);
+  --button-border: 1px solid rgba(196, 107, 71, 0.32);
+  --button-hover-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  --button-active-filled-shadow: 0 8px 18px rgba(196, 107, 71, 0.3);
+
+  /* —— 卡片 / 选中签名元素 —— */
+  --card-border: 1px solid #463f37;
+  --card-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  --card-hover-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  --card-selected-background: rgba(196, 107, 71, 0.16);
+  --card-selected-border-color: #c46b47;
+  --card-selected-shadow: 0 6px 16px rgba(196, 107, 71, 0.28);
+  --card-selected-outline: 1px solid rgba(196, 107, 71, 0.5);
+
+  /* —— 面板 / 数据面板 —— */
+  --panel-border: 1px solid #4c443b;
+  --panel-header-background: #38322c;
+  --panel-divider-color: #4c443b;
+  --data-panel-border: 1px solid #4c443b;
+  --data-panel-hover-background: #38322c;
+
+  /* —— 分段 / 标签 / 菜单 —— */
+  --segment-active-background: #38322c;
+  --tags-border: 1px solid #4c443b;
+  --tag-chip-border: 1px solid #4c443b;
+  --menu-border: 1px solid #4c443b;
+  --menu-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+
+  /* —— 滚动条 / 队列 / 重置 —— */
+  --scrollbar-thumb-color: #5a5044;
+  --scrollbar-thumb-hover-color: rgba(196, 107, 71, 0.7);
+  --queue-border: 1px solid #4c443b;
+  --queue-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  --reset-button-border: 1px solid rgba(224, 106, 82, 0.3);
 }

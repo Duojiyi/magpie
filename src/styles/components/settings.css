@@ -1038,10 +1038,8 @@
   text-align: center;
 }
 
-body.theme-mica .settings-view select.search-input,
-body.theme-acrylic .settings-view select.search-input,
-body.theme-mica .settings-view input.search-input,
-body.theme-acrylic .settings-view input.search-input {
+body.theme-glass .settings-view select.search-input,
+body.theme-glass .settings-view input.search-input {
   background: var(--bg-input) !important;
   color: var(--text-primary) !important;
   border: var(--input-border) !important;
@@ -1051,8 +1049,7 @@ body.theme-acrylic .settings-view input.search-input {
   backdrop-filter: saturate(135%);
 }
 
-body.theme-mica .settings-view select.search-input,
-body.theme-acrylic .settings-view select.search-input {
+body.theme-glass .settings-view select.search-input {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 28px !important;
@@ -1066,8 +1063,7 @@ body.theme-acrylic .settings-view select.search-input {
   background-repeat: no-repeat !important;
 }
 
-body.theme-mica .settings-view select.search-input option,
-body.theme-acrylic .settings-view select.search-input option {
+body.theme-glass .settings-view select.search-input option {
   background: var(--bg-window);
   color: var(--text-primary);
 }

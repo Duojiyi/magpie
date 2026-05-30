@@ -4,6 +4,39 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-06-13
+
+> 主题：**主题系统重构**。将原有 6 套主题与整套「主题商店」重构为 4 套全新主题（ink 墨玉 / paper 宣纸 / mist 晨雾 / dusk 暮山），统一低饱和暖偏移配色，彻底避开「AI 蓝」。
+>
+> 数据兼容：老用户旧主题值在启动时按权威映射表自动无缝迁移（不白屏、不重置其他数据）。
+
+### 新增
+
+- **四套全新主题**：`ink`（墨玉·默认·扁平，玉石 petrol 绿）、`paper`（宣纸·扁平，陶土赤陶）、`mist`（晨雾·玻璃·浅，雾绿）、`dusk`（暮山·玻璃·深，黄铜）。每套主题在浅 / 暗两种模式下均提供完整变量族与 `--accent-soft` / `--accent-glow` / `--danger` / `--success` / `--sensitive` / `--sensitive-soft` 语义状态色。
+- **统一选中签名元素**：左缘 3px 强调色光脊、操作图标徽章点亮、选中辉光（`--card-selected-shadow`），四套主题观感一致。
+- **`theme-glass` 语义 class**：玻璃主题（mist / dusk）统一标记，CSS 与组件不再硬编码具体主题名。
+
+### 改进
+
+- **默认主题统一为 ink**：前端 `DEFAULT_THEME` 与后端启动兜底均为 `ink`，消除启动主题不一致与闪烁。
+- **玻璃主题成像**：mist / dusk 经 DWM acrylic + CSS `backdrop-filter`（≤16px）叠加成像；在系统「减少透明度」时降级为不透明实色背景。
+- **能力按主题收敛**：自定义背景与表面透明度控件仅对玻璃主题（mist / dusk）开放，扁平主题（ink / paper）不再渲染相关控件。
+- **首帧不白屏**：迁移过程首帧即在根节点应用默认 `theme-ink` class，保证根容器始终持有恰好一个有效主题 class。
+
+### 移除
+
+- **主题商店（theme-store）**：彻底移除整套主题商店 feature（组件 / hooks / API / 面板 CSS）及全部残留引用（含 `web_ui.rs` 内嵌 CSS、`VITE_API_BASE_URL` 入口、`tiez_store_css_*` 缓存、i18n 文案）。
+- **5 套旧主题**：`retro` / `sticky-note` / `mica` / `acrylic` / `sakura` 不再可见可选；其旧主题值在启动时按权威映射表归一为新主题（`mica`/`sakura`→`mist`、`acrylic`→`dusk`、`retro`→`ink`、`sticky-note`→`paper`、`store-*`/未知→`ink`）。
+
+### 稳定性与测试
+
+- 为主题迁移完备性 / 幂等性、class 与玻璃判定对齐、能力收敛、前后端玻璃判定一致、默认主题一致、无残留扫描等核心正确性属性建立 **7 条可执行属性测试**（前端 fast-check + 后端 Rust），并新增主题 CSS 语义变量完备性、启动迁移写回行为等单元测试。
+- 修复 `normalizeThemeId` 经原型链访问 `LEGACY_THEME_MAP` 的缺陷（`valueOf` / `toString` 等键误判），改用 `hasOwnProperty` 守卫，仅匹配自有属性。
+
+### 兼容性
+
+- 仅 Windows。沿用既有内部兼容标识符（localStorage `tiez_` 前缀等）保持不变，确保 v0.4.1 数据继续可用。
+
 ## [0.4.1] - 2026-05-30
 
 > 主题：**稳定性 + 体验 + 界面升级**。在 v0.4.0 改名迁移的基础上，巩固迁移与自启动链路，新增多项剪贴板使用增强，统一界面观感，并建立属性测试与 CI 测试体系。

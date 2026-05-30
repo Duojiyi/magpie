@@ -1,4 +1,4 @@
-# 打包便携版（Windows）。
+﻿# 打包便携版（Windows）。
 # 前置条件：完成一次 `npm run tauri:build`，src-tauri\target\release\magpie.exe 存在。
 # 产物：artifacts\portable\Magpie_<version>_x64_portable.zip
 #
@@ -44,28 +44,26 @@ Copy-Item (Join-Path $repoRoot 'docs\cloud-sync-tutorial-mqtt.md')   (Join-Path 
 Copy-Item (Join-Path $repoRoot 'docs\cloud-sync-tutorial-webdav.md') (Join-Path $stage 'cloud-sync-tutorial-webdav.md') -ErrorAction SilentlyContinue
 
 # 4. 写一份便携版使用说明
-$portableReadme = @"
-# Magpie Portable 便携版
+# 注意：使用外置模板文件 README_PORTABLE.template.md 而非 here-string——避免 Windows
+# PowerShell 5.1 在中文系统下把无 BOM 的 .ps1 中的中文字面量按 GBK 误读后写出双重编码乱码。
+$portableReadmeSrc = Join-Path $PSScriptRoot 'README_PORTABLE.template.md'
+$portableReadmeDst = Join-Path $stage 'README_PORTABLE.md'
+if (-not (Test-Path $portableReadmeSrc)) {
+    throw "README_PORTABLE.template.md not found at $portableReadmeSrc"
+}
+Copy-Item $portableReadmeSrc $portableReadmeDst -Force
 
-直接双击 ``Magpie.exe`` 即可启动。
-
-数据存储在与 exe 同目录的 ``data\`` 文件夹中，包括：
-- 剪贴板历史数据库
-- 设置 / 标签 / 主题
-- 日志
-
-把整个目录复制到 U 盘 / 其他电脑 即可携带使用，不会在 AppData 留下数据。
-
-## 注意事项
-
-- 请勿将便携版放在系统受保护目录（如 ``C:\Program Files``），否则数据写入会被拒绝。
-- 如需升级版本，覆盖 ``Magpie.exe`` 即可，``data\`` 目录会被保留。
-- 卸载时直接删除整个目录即可，不会在系统注册表或 AppData 留下残留。
-
-来源：https://github.com/Duojiyi/magpie
-"@
-
-Set-Content -Path (Join-Path $stage 'README_PORTABLE.md') -Value $portableReadme -Encoding utf8
+# 4.1 编码自检：核实模板文件以 UTF-8 BOM 起头，且复制后字节序完整一致。
+# 自检故意不使用中文字面量，以兼容任何 PS 解析编码（避免脚本自身被 GBK 误读）。
+$srcBytes = [System.IO.File]::ReadAllBytes($portableReadmeSrc)
+$dstBytes = [System.IO.File]::ReadAllBytes($portableReadmeDst)
+if ($srcBytes.Length -ne $dstBytes.Length) {
+    throw "README_PORTABLE.md size mismatch: src=$($srcBytes.Length) dst=$($dstBytes.Length)"
+}
+# 模板必须以 UTF-8 BOM 起头（EF BB BF），保证 Windows 资源管理器 / 记事本正确识别中文。
+if ($dstBytes.Length -lt 3 -or $dstBytes[0] -ne 0xEF -or $dstBytes[1] -ne 0xBB -or $dstBytes[2] -ne 0xBF) {
+    throw "README_PORTABLE.md missing UTF-8 BOM at start (got: $('{0:X2}' -f $dstBytes[0]) $('{0:X2}' -f $dstBytes[1]) $('{0:X2}' -f $dstBytes[2]))"
+}
 
 # 5. 压缩为 zip
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipPath -CompressionLevel Optimal -Force

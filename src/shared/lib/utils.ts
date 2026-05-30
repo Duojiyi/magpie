@@ -1,4 +1,5 @@
 import type { Locale } from "../types";
+import { isGlassTheme } from "../config/themes";
 
 const SENSITIVE_MASK = "...";
 const URL_PROTOCOL_RE = /^([a-zA-Z][a-zA-Z0-9+\-.]*:\/\/)/;
@@ -49,11 +50,11 @@ export const getTagColor = (tag: string, theme: string) => {
   // (like "tag1" and "tag2") produce very different hues.
   const hue = Math.abs((hash * 137.508 + (hash >> 3)) % 360);
 
-  if (theme === "retro") {
-    // Retro: Keep mechanical saturation, but avoid overly dark chips.
+  if (!isGlassTheme(theme)) {
+    // 扁平主题（ink / 宣纸 paper）：保留机械收敛饱和度，避免 chip 过暗。
     return `hsl(${hue}, 58%, 48%)`;
   } else {
-    // Modern: Slightly lighter to keep tag chips readable.
+    // 玻璃主题（晨雾 mist / 暮山 dusk）：背景半透明，chip 取更高饱和与明度以保持醒目可读。
     return `hsl(${hue}, 76%, 62%)`;
   }
 };

@@ -95,7 +95,10 @@ export const useAppState = (): AppState => {
   const [winClipboardDisabled, setWinClipboardDisabled] = useState(false);
   const [registryWinVEnabled, setRegistryWinVEnabled] = useState(false);
   const [pasteMethod, setPasteMethod] = useState("simulate");
-  const [theme, setTheme] = useState(DEFAULT_THEME);
+  // 主题默认值跟随 DEFAULT_THEME 常量（themes.ts，现为 ink）。
+  // DEFAULT_THEME 类型已收窄为 ThemeId 字面量联合，此处显式标注为 string，
+  // 使其与 app/types.ts 中 theme/setTheme 的 StateSetter<string> 全链路类型一致。
+  const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [colorMode, setColorMode] = useState("system");
   const [showSourceAppIcon, setShowSourceAppIcon] = useState(true);
 

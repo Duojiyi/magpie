@@ -6,6 +6,7 @@ import {
     Clock, MousePointer2, ChevronLeft, Plus, Search, ExternalLink, CheckSquare, Copy
 } from 'lucide-react';
 import { getTagColor } from "../../../shared/lib/utils";
+import { isGlassTheme } from "../../../shared/config/themes";
 import type { ClipboardEntry } from "../../../shared/types";
 
 interface TagManagerProps {
@@ -274,7 +275,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
     return (
         <div
             ref={containerRef}
-            className={`themed-tag-manager theme-${theme} ${isCollapsed ? 'sidebar-collapsed' : ''} ${isStacked ? 'stacked-layout' : ''}`}
+            className={`themed-tag-manager theme-${theme}${isGlassTheme(theme) ? ' theme-glass' : ''} ${isCollapsed ? 'sidebar-collapsed' : ''} ${isStacked ? 'stacked-layout' : ''}`}
             style={{ 
                 ["--tm-sidebar-width" as any]: isCollapsed ? '48px' : `${sidebarWidth}px`,
                 ["--tm-sidebar-height" as any]: `${sidebarHeight}px`
@@ -1126,10 +1127,9 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                 }
 
                 /* Modern Theme Polishes for Confirm Dialog */
-                .theme-mica .confirm-dialog,
-                .theme-acrylic .confirm-dialog {
+                .theme-glass .confirm-dialog {
                     background: rgba(255, 255, 255, 0.8) !important;
-                    backdrop-filter: blur(20px);
+                    backdrop-filter: blur(16px);
                     padding: 24px !important;
                     border-radius: 16px !important;
                     box-shadow: 0 10px 40px rgba(0,0,0,0.2) !important;
@@ -1142,8 +1142,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     100% { transform: scale(1); opacity: 1; }
                 }
 
-                .theme-mica .confirm-dialog h3,
-                .theme-acrylic .confirm-dialog h3 {
+                .theme-glass .confirm-dialog h3 {
                     background: transparent !important;
                     color: var(--text-primary) !important;
                     font-size: 18px !important;
@@ -1152,21 +1151,18 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     padding: 0 !important;
                 }
 
-                .theme-mica .confirm-dialog-button,
-                .theme-acrylic .confirm-dialog-button {
+                .theme-glass .confirm-dialog-button {
                     border-radius: 10px !important;
                     border: none !important;
                     box-shadow: none !important;
                     font-weight: 600 !important;
                     background: rgba(0,0,0,0.05) !important;
                 }
-                .theme-mica .confirm-dialog-button:active,
-                .theme-acrylic .confirm-dialog-button:active {
+                .theme-glass .confirm-dialog-button:active {
                     transform: scale(0.95);
                 }
 
-                .theme-mica .confirm-dialog-button.primary,
-                .theme-acrylic .confirm-dialog-button.primary {
+                .theme-glass .confirm-dialog-button.primary {
                     background: var(--accent-color) !important;
                 }
 
@@ -1181,8 +1177,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                 .dark-mode .modal-overlay .confirm-dialog p {
                     color: #d1d1d1 !important;
                 }
-                .dark-mode .theme-mica .confirm-dialog,
-                .dark-mode .theme-acrylic .confirm-dialog {
+                .dark-mode .theme-glass .confirm-dialog {
                     background: rgba(30,30,30,0.8) !important;
                     border-color: rgba(255,255,255,0.1) !important;
                 }
@@ -1223,16 +1218,14 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                 .btn-save:hover { background: var(--accent-color-dark); }
                 
                 /* Modern Theme Polishes */
-                .theme-mica.themed-tag-manager,
-                .theme-acrylic.themed-tag-manager {
+                .theme-glass.themed-tag-manager {
                     gap: 14px;
                     padding: 14px;
                     background: transparent !important;
                     overflow: hidden;
                 }
 
-                .theme-mica .tag-sidebar,
-                .theme-acrylic .tag-sidebar {
+                .theme-glass .tag-sidebar {
                     width: clamp(196px, 24%, 248px);
                     border: var(--panel-border);
                     border-radius: 24px;
@@ -1241,28 +1234,24 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     overflow: hidden;
                 }
 
-                .theme-mica.sidebar-collapsed .tag-sidebar,
-                .theme-acrylic.sidebar-collapsed .tag-sidebar {
+                .theme-glass.sidebar-collapsed .tag-sidebar {
                     width: 64px;
                 }
 
-                .theme-mica .sidebar-header,
-                .theme-acrylic .sidebar-header {
+                .theme-glass .sidebar-header {
                     min-height: 88px;
                     padding: 24px 24px 18px;
                     background: transparent;
                     border-bottom: 1px solid var(--panel-divider-color);
                 }
 
-                .theme-mica .header-label,
-                .theme-acrylic .header-label {
+                .theme-glass .header-label {
                     font-size: 18px;
                     font-weight: 700;
                     letter-spacing: 0;
                 }
 
-                .theme-mica .collapse-toggle,
-                .theme-acrylic .collapse-toggle {
+                .theme-glass .collapse-toggle {
                     width: 40px;
                     height: 40px;
                     border: 1px solid rgba(var(--accent-color-rgb), 0.12);
@@ -1272,14 +1261,12 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     box-shadow: none;
                 }
 
-                .theme-mica .collapse-toggle:hover,
-                .theme-acrylic .collapse-toggle:hover {
+                .theme-glass .collapse-toggle:hover {
                     background: rgba(var(--accent-color-rgb), 0.08);
                     color: var(--text-primary);
                 }
 
-                .theme-mica .tag-search-box,
-                .theme-acrylic .tag-search-box {
+                .theme-glass .tag-search-box {
                     margin: 18px 16px;
                     min-height: 56px;
                     padding: 0 16px;
@@ -1290,33 +1277,28 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     box-shadow: var(--input-shadow);
                 }
 
-                .theme-mica .tag-search-box .search-icon-placeholder,
-                .theme-acrylic .tag-search-box .search-icon-placeholder {
+                .theme-glass .tag-search-box .search-icon-placeholder {
                     opacity: 0.78;
                     color: var(--text-secondary);
                 }
 
-                .theme-mica .tag-search-box input,
-                .theme-acrylic .tag-search-box input {
+                .theme-glass .tag-search-box input {
                     padding: 0;
                     font-size: 15px;
                     font-weight: 600;
                 }
 
-                .theme-mica .tag-search-box input::placeholder,
-                .theme-acrylic .tag-search-box input::placeholder {
+                .theme-glass .tag-search-box input::placeholder {
                     font-size: 15px;
                     font-style: normal;
                     opacity: 0.72;
                 }
 
-                .theme-mica .action-icons,
-                .theme-acrylic .action-icons {
+                .theme-glass .action-icons {
                     gap: 8px;
                 }
 
-                .theme-mica .action-icon,
-                .theme-acrylic .action-icon {
+                .theme-glass .action-icon {
                     display: flex;
                     align-items: center;
                     justify-content: center;
@@ -1328,20 +1310,17 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     opacity: 1;
                 }
 
-                .theme-mica .action-icon:hover,
-                .theme-acrylic .action-icon:hover {
+                .theme-glass .action-icon:hover {
                     background: rgba(var(--accent-color-rgb), 0.14);
                     color: var(--accent-color);
                     transform: none;
                 }
 
-                .theme-mica .tag-scroll,
-                .theme-acrylic .tag-scroll {
+                .theme-glass .tag-scroll {
                     padding: 4px 12px 16px;
                 }
 
-                .theme-mica .tag-item,
-                .theme-acrylic .tag-item {
+                .theme-glass .tag-item {
                     min-height: 60px;
                     padding: 14px 16px;
                     margin-bottom: 6px;
@@ -1350,41 +1329,35 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     background: transparent;
                 }
 
-                .theme-mica .tag-item:hover,
-                .theme-acrylic .tag-item:hover {
+                .theme-glass .tag-item:hover {
                     background: rgba(var(--accent-color-rgb), 0.06);
                     border-color: rgba(var(--accent-color-rgb), 0.12);
                 }
 
-                .theme-mica .tag-item.active,
-                .theme-acrylic .tag-item.active {
+                .theme-glass .tag-item.active {
                     background: rgba(var(--accent-color-rgb), 0.12);
                     border-color: rgba(var(--accent-color-rgb), 0.16);
                     box-shadow: none;
                 }
 
-                .theme-mica .tag-color-dot,
-                .theme-acrylic .tag-color-dot {
+                .theme-glass .tag-color-dot {
                     width: 14px;
                     height: 14px;
                     border: none;
                     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
                 }
 
-                .theme-mica .tag-name,
-                .theme-acrylic .tag-name {
+                .theme-glass .tag-name {
                     font-size: 15px;
                     font-weight: 700;
                 }
 
-                .theme-mica .tag-hover-actions,
-                .theme-acrylic .tag-hover-actions {
+                .theme-glass .tag-hover-actions {
                     gap: 6px;
                     color: var(--text-secondary);
                 }
 
-                .theme-mica .tag-hover-actions > span,
-                .theme-acrylic .tag-hover-actions > span {
+                .theme-glass .tag-hover-actions > span {
                     display: flex;
                     align-items: center;
                     justify-content: center;
@@ -1393,20 +1366,17 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     border-radius: 999px;
                 }
 
-                .theme-mica .tag-hover-actions > span:hover,
-                .theme-acrylic .tag-hover-actions > span:hover {
+                .theme-glass .tag-hover-actions > span:hover {
                     background: rgba(var(--accent-color-rgb), 0.12);
                     color: var(--accent-color);
                 }
 
-                .theme-mica .tag-item.active .tag-hover-actions > span:hover,
-                .theme-acrylic .tag-item.active .tag-hover-actions > span:hover {
+                .theme-glass .tag-item.active .tag-hover-actions > span:hover {
                     background: rgba(var(--accent-color-rgb), 0.14);
                     color: var(--accent-color);
                 }
 
-                .theme-mica .tag-badge,
-                .theme-acrylic .tag-badge {
+                .theme-glass .tag-badge {
                     margin-left: auto;
                     min-width: 34px;
                     height: 30px;
@@ -1422,14 +1392,12 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     opacity: 1;
                 }
 
-                .theme-mica .tag-item.active .tag-badge,
-                .theme-acrylic .tag-item.active .tag-badge {
+                .theme-glass .tag-item.active .tag-badge {
                     background: var(--accent-color);
                     color: #ffffff;
                 }
 
-                .theme-mica .tag-content,
-                .theme-acrylic .tag-content {
+                .theme-glass .tag-content {
                     min-width: 0;
                     border: var(--panel-border);
                     border-radius: 28px;
@@ -1437,37 +1405,31 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     box-shadow: var(--panel-shadow);
                 }
 
-                .theme-mica .content-toolbar,
-                .theme-acrylic .content-toolbar {
+                .theme-glass .content-toolbar {
                     min-height: 88px;
                     padding: 20px 28px;
                     border-bottom: 1px solid var(--panel-divider-color);
                     background: transparent;
                 }
 
-                .theme-mica .toolbar-left,
-                .theme-mica .toolbar-right,
-                .theme-acrylic .toolbar-left,
-                .theme-acrylic .toolbar-right {
+                .theme-glass .toolbar-left,
+                .theme-glass .toolbar-right {
                     display: flex;
                     align-items: center;
                     gap: 14px;
                 }
 
-                .theme-mica .toolbar-right,
-                .theme-acrylic .toolbar-right {
+                .theme-glass .toolbar-right {
                     margin-left: auto;
                 }
 
-                .theme-mica .toolbar-divider,
-                .theme-acrylic .toolbar-divider {
+                .theme-glass .toolbar-divider {
                     width: 1px;
                     height: 28px;
                     background: var(--panel-divider-color);
                 }
 
-                .theme-mica .selected-tag-indicator,
-                .theme-acrylic .selected-tag-indicator {
+                .theme-glass .selected-tag-indicator {
                     padding: 8px 16px;
                     border-radius: var(--radius-pill);
                     background: rgba(var(--accent-color-rgb), 0.12);
@@ -1479,20 +1441,17 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     opacity: 1;
                 }
 
-                .theme-mica .breadcrumb-text,
-                .theme-acrylic .breadcrumb-text {
+                .theme-glass .breadcrumb-text {
                     color: var(--text-primary);
                 }
 
-                .theme-mica .sort-group,
-                .theme-acrylic .sort-group {
+                .theme-glass .sort-group {
                     gap: 10px;
                     padding-left: 0;
                     border-left: none;
                 }
 
-                .theme-mica .sort-btn,
-                .theme-acrylic .sort-btn {
+                .theme-glass .sort-btn {
                     min-height: 40px;
                     padding: 0 16px;
                     border: 1px solid rgba(var(--accent-color-rgb), 0.14);
@@ -1506,28 +1465,24 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     gap: 8px;
                 }
 
-                .theme-mica .sort-btn span,
-                .theme-acrylic .sort-btn span {
+                .theme-glass .sort-btn span {
                     font-size: 13px;
                     font-weight: 500;
                 }
 
-                .theme-mica .sort-btn:hover,
-                .theme-acrylic .sort-btn:hover {
+                .theme-glass .sort-btn:hover {
                     background: rgba(var(--accent-color-rgb), 0.08);
                     color: var(--text-primary);
                 }
 
-                .theme-mica .sort-btn.active,
-                .theme-acrylic .sort-btn.active {
+                .theme-glass .sort-btn.active {
                     background: var(--accent-color);
                     border-color: var(--accent-color);
                     color: #ffffff;
                     box-shadow: 0 12px 24px rgba(var(--accent-color-rgb), 0.24);
                 }
 
-                .theme-mica .add-item-btn,
-                .theme-acrylic .add-item-btn {
+                .theme-glass .add-item-btn {
                     width: auto !important;
                     min-height: 40px;
                     padding: 0 18px;
@@ -1541,19 +1496,16 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     font-weight: 600;
                 }
 
-                .theme-mica .add-item-btn span,
-                .theme-acrylic .add-item-btn span {
+                .theme-glass .add-item-btn span {
                     display: inline-block;
                 }
 
-                .theme-mica .add-item-btn:hover,
-                .theme-acrylic .add-item-btn:hover {
+                .theme-glass .add-item-btn:hover {
                     background: var(--accent-hover);
                     color: #ffffff;
                 }
 
-                .theme-mica .view-toggle,
-                .theme-acrylic .view-toggle {
+                .theme-glass .view-toggle {
                     padding: 4px;
                     gap: 4px;
                     border: 1px solid rgba(var(--accent-color-rgb), 0.12);
@@ -1561,8 +1513,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     background: var(--bg-input);
                 }
 
-                .theme-mica .toggle-btn,
-                .theme-acrylic .toggle-btn {
+                .theme-glass .toggle-btn {
                     width: 44px;
                     height: 44px;
                     padding: 0;
@@ -1573,48 +1524,41 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     box-shadow: none;
                 }
 
-                .theme-mica .toggle-btn:hover,
-                .theme-acrylic .toggle-btn:hover {
+                .theme-glass .toggle-btn:hover {
                     background: rgba(var(--accent-color-rgb), 0.08);
                     color: var(--text-primary);
                 }
 
-                .theme-mica .toggle-btn.active,
-                .theme-acrylic .toggle-btn.active {
+                .theme-glass .toggle-btn.active {
                     background: var(--accent-color);
                     color: #ffffff;
                     box-shadow: 0 10px 20px rgba(var(--accent-color-rgb), 0.2);
                 }
 
-                .theme-mica .items-area,
-                .theme-acrylic .items-area {
+                .theme-glass .items-area {
                     padding: 28px;
                     background: transparent;
                 }
 
-                .theme-mica .status-msg,
-                .theme-acrylic .status-msg {
+                .theme-glass .status-msg {
                     padding: 36px 12px;
                     text-align: center;
                     color: var(--text-secondary);
                     font-size: 14px;
                 }
 
-                .theme-mica .items-grid,
-                .theme-acrylic .items-grid {
+                .theme-glass .items-grid {
                     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
                     gap: 22px;
                 }
 
-                .theme-mica .items-list,
-                .theme-acrylic .items-list {
+                .theme-glass .items-list {
                     display: grid;
                     grid-template-columns: 1fr;
                     gap: 18px;
                 }
 
-                .theme-mica .themed-card,
-                .theme-acrylic .themed-card {
+                .theme-glass .themed-card {
                     position: relative;
                     min-height: 244px;
                     padding: 24px 22px 18px;
@@ -1627,21 +1571,18 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
                 }
 
-                .theme-mica .themed-card:hover,
-                .theme-acrylic .themed-card:hover {
+                .theme-glass .themed-card:hover {
                     transform: translateY(-2px);
                     border-color: rgba(var(--accent-color-rgb), 0.14);
                     box-shadow: 0 18px 34px rgba(15, 23, 42, 0.1);
                     background: var(--bg-input);
                 }
 
-                .theme-mica .items-list .themed-card,
-                .theme-acrylic .items-list .themed-card {
+                .theme-glass .items-list .themed-card {
                     min-height: 180px;
                 }
 
-                .theme-mica .card-top-row,
-                .theme-acrylic .card-top-row {
+                .theme-glass .card-top-row {
                     position: absolute;
                     top: 14px;
                     right: 14px;
@@ -1653,20 +1594,16 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     z-index: 1;
                 }
 
-                .theme-mica .themed-card:hover .card-top-row,
-                .theme-acrylic .themed-card:hover .card-top-row {
+                .theme-glass .themed-card:hover .card-top-row {
                     opacity: 1;
                 }
 
-                .theme-mica .card-actions-left,
-                .theme-acrylic .card-actions-left {
+                .theme-glass .card-actions-left {
                     gap: 6px;
                 }
 
-                .theme-mica .card-action-btn,
-                .theme-mica .del-btn,
-                .theme-acrylic .card-action-btn,
-                .theme-acrylic .del-btn {
+                .theme-glass .card-action-btn,
+                .theme-glass .del-btn {
                     width: 28px;
                     height: 28px;
                     padding: 0;
@@ -1678,16 +1615,13 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     opacity: 1;
                 }
 
-                .theme-mica .card-action-btn:hover,
-                .theme-mica .del-btn:hover,
-                .theme-acrylic .card-action-btn:hover,
-                .theme-acrylic .del-btn:hover {
+                .theme-glass .card-action-btn:hover,
+                .theme-glass .del-btn:hover {
                     background: rgba(var(--accent-color-rgb), 0.12);
                     color: var(--accent-color);
                 }
 
-                .theme-mica .card-body-text,
-                .theme-acrylic .card-body-text {
+                .theme-glass .card-body-text {
                     flex: 1;
                     padding-top: 12px;
                     font-size: 15px;
@@ -1698,14 +1632,12 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     min-height: 122px;
                 }
 
-                .theme-mica .items-list .card-body-text,
-                .theme-acrylic .items-list .card-body-text {
+                .theme-glass .items-list .card-body-text {
                     -webkit-line-clamp: 3;
                     min-height: 84px;
                 }
 
-                .theme-mica .card-media,
-                .theme-acrylic .card-media {
+                .theme-glass .card-media {
                     flex: 1;
                     min-height: 190px;
                     margin-top: 14px;
@@ -1715,23 +1647,20 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     align-items: center;
                 }
 
-                .theme-mica .card-media img,
-                .theme-acrylic .card-media img {
+                .theme-glass .card-media img {
                     max-width: 100%;
                     max-height: 190px;
                     object-fit: contain;
                     border-radius: 14px;
                 }
 
-                .theme-mica .card-divider,
-                .theme-acrylic .card-divider {
+                .theme-glass .card-divider {
                     height: 1px;
                     margin: 18px 0 14px;
                     background: var(--panel-divider-color);
                 }
 
-                .theme-mica .card-footer,
-                .theme-acrylic .card-footer {
+                .theme-glass .card-footer {
                     margin-top: auto;
                     font-size: 13px;
                     font-weight: 600;
@@ -1739,15 +1668,12 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     opacity: 1;
                 }
 
-                .theme-mica .meta-usage,
-                .theme-acrylic .meta-usage {
+                .theme-glass .meta-usage {
                     gap: 4px;
                 }
 
-                .theme-mica .inline-tag-edit,
-                .theme-acrylic .inline-tag-edit,
-                .theme-mica .modal-input-field input,
-                .theme-acrylic .modal-input-field input {
+                .theme-glass .inline-tag-edit,
+                .theme-glass .modal-input-field input {
                     border: var(--input-border);
                     border-radius: var(--input-radius);
                     box-shadow: var(--input-shadow);
@@ -1755,8 +1681,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     outline: none;
                 }
 
-                .theme-mica .modal-input-field textarea,
-                .theme-acrylic .modal-input-field textarea {
+                .theme-glass .modal-input-field textarea {
                     background: var(--bg-input) !important;
                     border: var(--input-border) !important;
                     border-radius: 16px !important;
@@ -1764,32 +1689,25 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     color: var(--text-primary) !important;
                 }
 
-                .theme-mica .modal-buttons button,
-                .theme-acrylic .modal-buttons button {
+                .theme-glass .modal-buttons button {
                     border: var(--button-border);
                     border-radius: var(--button-radius);
                     box-shadow: var(--button-shadow);
                 }
 
-                .dark-mode .theme-mica .tag-search-box,
-                .dark-mode .theme-acrylic .tag-search-box,
-                .dark-mode .theme-mica .tag-sidebar,
-                .dark-mode .theme-acrylic .tag-sidebar,
-                .dark-mode .theme-mica .tag-content,
-                .dark-mode .theme-acrylic .tag-content {
+                .dark-mode .theme-glass .tag-search-box,
+                .dark-mode .theme-glass .tag-sidebar,
+                .dark-mode .theme-glass .tag-content {
                     border-color: rgba(255, 255, 255, 0.08);
                 }
 
-                .dark-mode .theme-mica .card-action-btn,
-                .dark-mode .theme-mica .del-btn,
-                .dark-mode .theme-acrylic .card-action-btn,
-                .dark-mode .theme-acrylic .del-btn {
+                .dark-mode .theme-glass .card-action-btn,
+                .dark-mode .theme-glass .del-btn {
                     background: rgba(22, 28, 39, 0.92);
                     border-color: rgba(255, 255, 255, 0.08);
                 }
 
-                .dark-mode .theme-mica .tag-badge,
-                .dark-mode .theme-acrylic .tag-badge {
+                .dark-mode .theme-glass .tag-badge {
                     background: rgba(255, 255, 255, 0.08);
                 }
                 
@@ -1870,8 +1788,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     cursor: not-allowed;
                 }
                 
-                .theme-mica .sort-btn.danger:hover:not(:disabled),
-                .theme-acrylic .sort-btn.danger:hover:not(:disabled) {
+                .theme-glass .sort-btn.danger:hover:not(:disabled) {
                     background: rgba(255, 77, 79, 0.15);
                 }
 
@@ -1931,7 +1848,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                 }
 
                 /* Premium adjustments for modern themes */
-                .theme-mica .manage-btn, .theme-acrylic .manage-btn {
+                .theme-glass .manage-btn {
                     min-height: 40px;
                     border-radius: 14px;
                     padding: 0 16px;
@@ -1939,20 +1856,19 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     margin-left: 0;
                 }
 
-                .theme-mica .action-btn-primary, .theme-acrylic .action-btn-primary,
-                .theme-mica .action-btn-danger, .theme-acrylic .action-btn-danger,
-                .theme-mica .action-btn-secondary, .theme-acrylic .action-btn-secondary {
+                .theme-glass .action-btn-primary,
+                .theme-glass .action-btn-danger,
+                .theme-glass .action-btn-secondary {
                     min-height: 40px;
                     border-radius: 14px;
                 }
 
-                .theme-mica .selection-indicator, .theme-acrylic .selection-indicator {
+                .theme-glass .selection-indicator {
                     border-radius: 8px;
                     border-color: rgba(var(--accent-color-rgb), 0.2);
                 }
                 
-                .theme-mica .manage-mode .themed-card.selected,
-                .theme-acrylic .manage-mode .themed-card.selected {
+                .theme-glass .manage-mode .themed-card.selected {
                     background: rgba(var(--accent-color-rgb), 0.08);
                     box-shadow: 0 12px 28px rgba(var(--accent-color-rgb), 0.15);
                 }
@@ -1986,7 +1902,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                     transform: scale(0.95);
                 }
                 
-                .theme-mica .fab-add-btn, .theme-acrylic .fab-add-btn {
+                .theme-glass .fab-add-btn {
                     width: 48px;
                     height: 48px;
                     background: var(--accent-color);

@@ -174,15 +174,8 @@
 .hide-scrollbar::-webkit-scrollbar {
     display: none;
 }
-
-/* --- Retro-specific accents --- */
-.theme-retro .tag-chip {
-    font-weight: 800;
-}
-
-/* --- Modern Styles (Mica / Acrylic) --- */
-.theme-mica .search-input.dropdown-open,
-.theme-acrylic .search-input.dropdown-open {
+/* --- Modern Styles (玻璃主题 mist / dusk) --- */
+.theme-glass .search-input.dropdown-open {
     border-radius: 10px !important;
     border: 1px solid rgba(128, 128, 128, 0.2) !important;
     box-shadow: none !important;
@@ -191,8 +184,7 @@
     -webkit-backdrop-filter: none !important;
 }
 
-:root.dark-mode .theme-mica .search-input.dropdown-open,
-:root.dark-mode .theme-acrylic .search-input.dropdown-open {
+:root.dark-mode .theme-glass .search-input.dropdown-open {
     background: rgba(255, 255, 255, 0.18) !important;
     border-color: rgba(255, 255, 255, 0.1) !important;
 }

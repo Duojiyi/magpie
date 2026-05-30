@@ -376,28 +376,25 @@ pub fn toggle_window(app: &AppHandle) {
                     );
                 }
                 
-                // Re-apply vibrancy when showing window
+                // 显示窗口时重新应用 vibrancy：复用 9.1 的统一玻璃判定与 tint 取值，
+                // 玻璃主题（mist/dusk，含旧别名归一）应用带主题色 tint 的 acrylic，非玻璃主题清除 vibrancy。
                 let settings = app.state::<SettingsState>();
                 let theme = settings.theme.lock().unwrap().clone();
-                let is_dark = match settings.theme.lock().unwrap().as_str() {
-                    "mica" | "acrylic" => {
-                        // Check system theme
-                        matches!(window.theme().unwrap_or(tauri::Theme::Dark), tauri::Theme::Dark)
-                    }
-                    _ => false,
-                };
-                
-                if theme == "mica" {
-                    let _ = window_vibrancy::apply_mica(&window, Some(is_dark));
-                } else if theme == "acrylic" {
-                    let _ = window_vibrancy::apply_acrylic(
-                        &window,
-                        Some(if is_dark {
-                            (30, 30, 30, 40)
-                        } else {
-                            (240, 240, 240, 40)
-                        }),
+                if crate::app::commands::ui_cmd::is_glass_theme(&theme) {
+                    // 依据系统主题判定暗色模式，以选择 glass_tint 的浅/暗取值
+                    let is_dark = matches!(
+                        window.theme().unwrap_or(tauri::Theme::Dark),
+                        tauri::Theme::Dark
                     );
+                    let tint = crate::app::commands::ui_cmd::glass_tint(&theme, is_dark);
+                    if let Err(err) = window_vibrancy::apply_acrylic(&window, Some(tint)) {
+                        eprintln!(
+                            "[主题] 显示窗口时重新应用 acrylic 玻璃效果失败（{theme}），窗口退化为不透明实色背景: {err}"
+                        );
+                    }
+                } else {
+                    // 非玻璃主题（ink/paper）：清除 vibrancy，使用不透明实色背景
+                    let _ = window_vibrancy::clear_vibrancy(&window);
                 }
                 
                 let _ = window.show();

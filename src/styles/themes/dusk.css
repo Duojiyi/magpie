@@ -1,0 +1,353 @@
+/* 暮山 Dusk 主题 —— 液态玻璃·深，黄铜强调色 #C9A26B，选中辉光强度为四套主题中最高 */
+/* 玻璃主题：窗口背景置透明，让后端 DWM acrylic（深梅紫炭 tint）透出，前端叠加半透明表面 + backdrop-filter */
+:root.theme-dusk,
+body.theme-dusk {
+  background-color: transparent !important;
+
+  /* —— 背景族（浅轨：暮色微光，淡梅紫灰半透明表面）—— */
+  --bg-window: rgba(236, 230, 240, calc(0.56 * var(--surface-opacity-scale, 1)));
+  --bg-content: transparent;
+  --bg-toolbar: transparent;
+  --bg-panel: rgba(248, 244, 250, 0.4);
+  --bg-input: rgba(252, 250, 253, 0.6);
+  --bg-element: rgba(248, 244, 250, 0.32);
+  --bg-button: rgba(248, 244, 250, 0.26);
+
+  /* —— 文本族 —— */
+  --text-primary: #2c2433;
+  --text-secondary: #5d5468;
+  --text-muted: #8a8194;
+
+  /* —— 强调色族（黄铜，浅暗同色）—— */
+  --accent-color: #c9a26b;
+  --accent-color-rgb: 201, 162, 107;
+  --accent-hover: #d8b581;
+  --accent-soft: rgba(201, 162, 107, 0.16);
+  --accent-glow: rgba(201, 162, 107, 0.55);
+
+  /* —— 语义状态色 —— */
+  --danger: #c0524a;
+  --success: #5e8c57;
+  --sensitive: #c77a33;
+  --sensitive-soft: rgba(199, 122, 51, 0.14);
+
+  /* —— 线条 / 阴影 —— */
+  --line-soft: rgba(44, 36, 51, 0.12);
+  --line-strong: rgba(44, 36, 51, 0.2);
+  --shadow-xs: 0 4px 10px rgba(36, 28, 46, 0.08);
+  --shadow-sm: 0 10px 22px rgba(36, 28, 46, 0.12);
+  --shadow-md: 0 18px 36px rgba(36, 28, 46, 0.16);
+  --shadow-lg: 0 24px 54px rgba(36, 28, 46, 0.2);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+
+  /* —— shell（玻璃模糊半径 16px，符合 1–16px 上限）—— */
+  --shell-background: rgba(236, 230, 240, calc(0.56 * var(--surface-opacity-scale, 1)));
+  --shell-border: 1px solid rgba(255, 255, 255, 0.34);
+  --shell-shadow: 0 12px 40px rgba(36, 28, 46, 0.2);
+  --shell-radius: 10px;
+  --shell-backdrop-filter: blur(16px) saturate(160%);
+
+  --toolbar-border: 1px solid rgba(201, 162, 107, 0.16);
+
+  /* —— input —— */
+  --input-border: 1px solid rgba(201, 162, 107, 0.22);
+  --input-radius: 12px;
+  --input-shadow: none;
+  --input-focus-shadow: 0 0 0 3px rgba(201, 162, 107, 0.18);
+
+  /* —— button —— */
+  --button-border: 1px solid rgba(201, 162, 107, 0.22);
+  --button-radius: 10px;
+  --button-shadow: none;
+  --button-hover-shadow: 0 8px 22px rgba(36, 28, 46, 0.14);
+  --button-active-shadow: 0 4px 12px rgba(36, 28, 46, 0.1);
+  --button-active-filled-shadow: 0 12px 26px rgba(201, 162, 107, 0.3);
+
+  /* —— card（选中签名元素：辉光强度最高）—— */
+  --card-border: 1px solid rgba(201, 162, 107, 0.2);
+  --card-radius: 14px;
+  --card-shadow: none;
+  --card-hover-shadow: 0 10px 28px rgba(36, 28, 46, 0.16);
+  --card-selected-background: rgba(201, 162, 107, 0.14);
+  --card-selected-border-color: rgba(201, 162, 107, 0.6);
+  --card-selected-shadow:
+    0 0 0 1px rgba(201, 162, 107, 0.45),
+    0 16px 40px rgba(201, 162, 107, 0.34),
+    0 0 24px rgba(201, 162, 107, 0.28);
+
+  /* —— panel —— */
+  --panel-border: 1px solid rgba(255, 255, 255, 0.3);
+  --panel-radius: 14px;
+  --panel-shadow: 0 8px 20px rgba(36, 28, 46, 0.1);
+  --panel-divider-color: rgba(44, 36, 51, 0.08);
+
+  --data-panel-border: 1px solid rgba(201, 162, 107, 0.2);
+  --data-panel-shadow: none;
+
+  /* —— menu —— */
+  --menu-border: 1px solid rgba(255, 255, 255, 0.3);
+  --menu-shadow: 0 18px 34px rgba(36, 28, 46, 0.18);
+
+  /* —— scrollbar —— */
+  --scrollbar-size: 8px;
+  --scrollbar-size-thin: 4px;
+  --scrollbar-radius: 999px;
+  --scrollbar-track-background: transparent;
+  --scrollbar-track-border-start: none;
+  --scrollbar-thumb-color: rgba(93, 84, 104, 0.5);
+  --scrollbar-thumb-hover-color: rgba(201, 162, 107, 0.7);
+  --scrollbar-thumb-border: 2px solid transparent;
+  --scrollbar-chat-thumb-border: 2px solid transparent;
+
+  /* —— queue —— */
+  --queue-border: 1px solid rgba(255, 255, 255, 0.3);
+  --queue-shadow: 0 20px 42px rgba(36, 28, 46, 0.2);
+
+  --reset-button-border: 1px solid rgba(192, 82, 74, 0.24);
+}
+
+/* —— 自定义背景层（仅玻璃主题）：参照 mica/acrylic 的 body::before 结构 —— */
+body.theme-dusk {
+  position: relative;
+  isolation: isolate;
+}
+
+body.theme-dusk::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background-image: var(--custom-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+  opacity: 0.18;
+  pointer-events: none;
+  border-radius: calc(var(--shell-radius) + 1px);
+}
+
+body.has-custom-bg.theme-dusk::before {
+  opacity: var(--custom-bg-opacity, 0.45);
+}
+
+/* 无自定义背景时的默认暮色渐变（梅紫 + 黄铜微光） */
+body.theme-dusk:not(.has-custom-bg)::before {
+  background-image:
+    radial-gradient(120% 120% at 90% 6%, rgba(201, 162, 107, 0.2) 0%, rgba(201, 162, 107, 0.05) 48%, transparent 100%),
+    linear-gradient(160deg, rgba(120, 96, 130, 0.14) 0%, rgba(86, 70, 104, 0.08) 50%, rgba(60, 50, 74, 0.12) 100%);
+  opacity: 0.44;
+}
+
+body.theme-dusk #root {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  isolation: isolate;
+  background-clip: padding-box;
+}
+
+/* #root 顶部高光层，强化液态玻璃棱边 */
+body.theme-dusk #root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    radial-gradient(140% 110% at 100% 0%, rgba(201, 162, 107, 0.16) 0%, rgba(201, 162, 107, 0.03) 58%, transparent 100%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+body.theme-dusk #root > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* —— 选中签名元素 1：左缘 3px 黄铜渐变光脊（--card-selected-border-color + --accent-glow，含辉光）—— */
+body.theme-dusk .history-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--card-selected-border-color), var(--accent-glow));
+  border-radius: 3px 0 0 3px;
+  box-shadow: 0 0 14px var(--accent-glow);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* —— 选中签名元素 2：操作图标徽章点亮（背景切 --accent-soft，--accent-color 描边）—— */
+body.theme-dusk .history-item.selected .item-actions .btn-icon {
+  background: var(--accent-soft);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+/* —— 暗轨：深梅紫炭，黄铜辉光达到最强 —— */
+@media (prefers-color-scheme: dark) {
+  :root.theme-dusk:not(.light-mode),
+  body.theme-dusk:not(.light-mode) {
+    --bg-window: rgba(30, 26, 36, calc(0.54 * var(--surface-opacity-scale, 1)));
+    --bg-panel: rgba(40, 34, 48, 0.4);
+    --bg-input: rgba(255, 255, 255, 0.1);
+    --bg-element: rgba(52, 44, 60, 0.44);
+    --bg-button: rgba(255, 255, 255, 0.06);
+
+    --text-primary: #ece6f0;
+    --text-secondary: #b3a9bf;
+    --text-muted: #867d92;
+
+    --accent-soft: rgba(201, 162, 107, 0.22);
+    --accent-glow: rgba(201, 162, 107, 0.7);
+
+    --danger: #e5786c;
+    --success: #84b97e;
+    --sensitive: #e0a04a;
+    --sensitive-soft: rgba(224, 160, 74, 0.18);
+
+    --line-soft: rgba(255, 255, 255, 0.12);
+    --line-strong: rgba(255, 255, 255, 0.18);
+    --shadow-xs: 0 4px 12px rgba(0, 0, 0, 0.24);
+    --shadow-sm: 0 10px 24px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 18px 36px rgba(0, 0, 0, 0.36);
+    --shadow-lg: 0 24px 54px rgba(0, 0, 0, 0.44);
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+    --shell-background: rgba(30, 26, 36, calc(0.54 * var(--surface-opacity-scale, 1)));
+    --shell-border: 1px solid rgba(255, 255, 255, 0.1);
+    --shell-backdrop-filter: blur(16px) saturate(150%);
+    --toolbar-border: 1px solid rgba(255, 255, 255, 0.08);
+    --panel-border: 1px solid rgba(255, 255, 255, 0.1);
+    --menu-border: 1px solid rgba(255, 255, 255, 0.1);
+
+    --card-selected-background: rgba(201, 162, 107, 0.2);
+    --card-selected-border-color: rgba(201, 162, 107, 0.72);
+    --card-selected-shadow:
+      0 0 0 1px rgba(201, 162, 107, 0.55),
+      0 18px 46px rgba(201, 162, 107, 0.42),
+      0 0 30px rgba(201, 162, 107, 0.4);
+  }
+
+  body.theme-dusk:not(.light-mode) #root::before {
+    background:
+      radial-gradient(140% 120% at 100% 0%, rgba(201, 162, 107, 0.12) 0%, rgba(201, 162, 107, 0.02) 60%, transparent 100%),
+      linear-gradient(160deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
+  }
+
+  body.theme-dusk:not(.light-mode):not(.has-custom-bg)::before {
+    background-image:
+      radial-gradient(120% 120% at 90% 6%, rgba(201, 162, 107, 0.18) 0%, rgba(201, 162, 107, 0.04) 46%, transparent 100%),
+      linear-gradient(150deg, rgba(86, 70, 104, 0.22) 0%, rgba(48, 40, 60, 0.1) 52%, rgba(36, 30, 46, 0.2) 100%);
+    opacity: 0.52;
+  }
+}
+
+/* 显式 dark-mode（用户手动切暗色，不依赖系统）—— 同暗轨取值 */
+:root.dark-mode.theme-dusk,
+body.dark-mode.theme-dusk {
+  --bg-window: rgba(30, 26, 36, calc(0.54 * var(--surface-opacity-scale, 1)));
+  --bg-panel: rgba(40, 34, 48, 0.4);
+  --bg-input: rgba(255, 255, 255, 0.1);
+  --bg-element: rgba(52, 44, 60, 0.44);
+  --bg-button: rgba(255, 255, 255, 0.06);
+
+  --text-primary: #ece6f0;
+  --text-secondary: #b3a9bf;
+  --text-muted: #867d92;
+
+  --accent-soft: rgba(201, 162, 107, 0.22);
+  --accent-glow: rgba(201, 162, 107, 0.7);
+
+  --danger: #e5786c;
+  --success: #84b97e;
+  --sensitive: #e0a04a;
+  --sensitive-soft: rgba(224, 160, 74, 0.18);
+
+  --line-soft: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --shadow-xs: 0 4px 12px rgba(0, 0, 0, 0.24);
+  --shadow-sm: 0 10px 24px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 18px 36px rgba(0, 0, 0, 0.36);
+  --shadow-lg: 0 24px 54px rgba(0, 0, 0, 0.44);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  --shell-background: rgba(30, 26, 36, calc(0.54 * var(--surface-opacity-scale, 1)));
+  --shell-border: 1px solid rgba(255, 255, 255, 0.1);
+  --shell-backdrop-filter: blur(16px) saturate(150%);
+  --toolbar-border: 1px solid rgba(255, 255, 255, 0.08);
+  --panel-border: 1px solid rgba(255, 255, 255, 0.1);
+  --menu-border: 1px solid rgba(255, 255, 255, 0.1);
+
+  --card-selected-background: rgba(201, 162, 107, 0.2);
+  --card-selected-border-color: rgba(201, 162, 107, 0.72);
+  --card-selected-shadow:
+    0 0 0 1px rgba(201, 162, 107, 0.55),
+    0 18px 46px rgba(201, 162, 107, 0.42),
+    0 0 30px rgba(201, 162, 107, 0.4);
+}
+
+body.dark-mode.theme-dusk:not(.has-custom-bg)::before {
+  background-image:
+    radial-gradient(120% 120% at 90% 6%, rgba(201, 162, 107, 0.18) 0%, rgba(201, 162, 107, 0.04) 46%, transparent 100%),
+    linear-gradient(150deg, rgba(86, 70, 104, 0.22) 0%, rgba(48, 40, 60, 0.1) 52%, rgba(36, 30, 46, 0.2) 100%);
+  opacity: 0.52;
+}
+
+/* —— 减少透明度降级（同 mist 规则）：切换不透明实色背景并移除 backdrop-filter，运行时开关响应式生效 —— */
+@media (prefers-reduced-transparency: reduce) {
+  :root.theme-dusk,
+  body.theme-dusk {
+    --bg-window: #ece6f0;
+    --bg-panel: #f4f0f6;
+    --shell-background: #ece6f0;
+    --shell-backdrop-filter: none;
+  }
+
+  :root.dark-mode.theme-dusk,
+  body.dark-mode.theme-dusk {
+    --bg-window: #1f1a26;
+    --bg-panel: #2a2433;
+    --shell-background: #1f1a26;
+    --shell-backdrop-filter: none;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root.theme-dusk:not(.light-mode),
+    body.theme-dusk:not(.light-mode) {
+      --bg-window: #1f1a26;
+      --bg-panel: #2a2433;
+      --shell-background: #1f1a26;
+      --shell-backdrop-filter: none;
+    }
+  }
+
+  /* 移除全部子元素的 backdrop-filter，保证可读性与性能 */
+  body.theme-dusk *,
+  body.theme-dusk #root {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* 降级后窗口背景由透明改为实色，去掉玻璃 ::before 渐变层 */
+  body.theme-dusk {
+    background-color: var(--bg-window) !important;
+  }
+
+  body.theme-dusk:not(.has-custom-bg)::before,
+  body.theme-dusk #root::before {
+    display: none !important;
+  }
+}
+
+/* 紧凑预览态：去除外壳背景/边框/阴影（与 mica/acrylic 一致） */
+body.compact-preview.theme-dusk #root,
+body.theme-dusk.compact-preview #root,
+body.dark-mode.compact-preview.theme-dusk #root {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

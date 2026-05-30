@@ -7,7 +7,7 @@ export type StateSetter<T> = Dispatch<SetStateAction<T>>;
 export type InstalledAppOption = { label: string; value: string };
 export type DefaultAppsMap = Record<string, string>;
 export type QuickPasteModifier = "disabled" | "ctrl" | "alt" | "shift" | "win";
-export type SettingsSubpage = "home" | "advanced" | "theme-store";
+export type SettingsSubpage = "home" | "advanced";
 /** 卡片密度三档：紧凑 / 标准 / 宽松（V5 / 需求 32），存于 app.card_density，默认 standard */
 export type CardDensity = "compact" | "standard" | "loose";
 

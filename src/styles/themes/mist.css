@@ -1,0 +1,326 @@
+/* 晨雾 Mist 主题（液态玻璃·浅）
+ * 配色：低饱和雾绿 petrol，青瓷磨砂半透明表面 + DWM acrylic 浅青瓷 tint。
+ * 强调色：浅 #4E8C7D / 暗 #6FA897。窗口背景 transparent，让系统模糊透出。
+ * 浅/暗双轨完整变量族，逐项对照 mica.css 变量集合赋值（不回退默认值）。
+ */
+:root.theme-mist,
+body.theme-mist {
+  /* 玻璃主题窗口背景透明，由 DWM acrylic + CSS 表面半透明叠加成像 */
+  background-color: transparent !important;
+
+  /* —— 背景族（半透明 + --surface-opacity-scale 联动）—— */
+  --bg-window: rgba(228, 238, 234, calc(0.82 * var(--surface-opacity-scale, 1)));
+  --bg-content: transparent;
+  --bg-toolbar: transparent;
+  --bg-panel: rgba(255, 255, 255, 0.46);
+  --bg-input: rgba(255, 255, 255, 0.72);
+  --bg-element: rgba(255, 255, 255, 0.58);
+  --bg-button: rgba(255, 255, 255, 0.44);
+
+  /* —— 文本族（深 petrol slate，暖偏移低饱和）—— */
+  --text-primary: #1d2e2a;
+  --text-secondary: #51635d;
+  --text-muted: #7f918b;
+
+  /* —— 强调色族（雾绿 #4E8C7D）—— */
+  --accent-color: #4e8c7d;
+  --accent-color-rgb: 78, 140, 125;
+  --accent-hover: #437a6d;
+  --accent-soft: rgba(78, 140, 125, 0.14);
+  --accent-glow: rgba(78, 140, 125, 0.4);
+
+  /* —— 语义状态色（暖偏移低饱和）—— */
+  --danger: #c2554a;
+  --success: #5a9472;
+  --sensitive: #c77a3e;
+  --sensitive-soft: rgba(199, 122, 62, 0.16);
+
+  /* —— 线条 / 阴影（青绿 tint，玻璃边缘高光）—— */
+  --line-soft: rgba(40, 70, 62, 0.12);
+  --line-strong: rgba(40, 70, 62, 0.2);
+  --shadow-xs: 0 4px 10px rgba(40, 70, 62, 0.06);
+  --shadow-sm: 0 10px 22px rgba(40, 70, 62, 0.08);
+  --shadow-md: 0 18px 36px rgba(40, 70, 62, 0.1);
+  --shadow-lg: 0 20px 48px rgba(40, 70, 62, 0.12);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+
+  /* —— shell（外壳，CSS backdrop-filter 模糊半径限制 16px）—— */
+  --shell-background: rgba(228, 238, 234, calc(0.82 * var(--surface-opacity-scale, 1)));
+  --shell-border: 1px solid rgba(255, 255, 255, 0.42);
+  --shell-shadow: 0 18px 48px rgba(40, 70, 62, 0.14);
+  --shell-radius: 10px;
+  --shell-backdrop-filter: blur(16px) saturate(150%);
+
+  --toolbar-border: 1px solid rgba(40, 70, 62, 0.12);
+
+  --input-border: 1px solid rgba(40, 70, 62, 0.16);
+  --input-radius: 12px;
+  --input-shadow: none;
+  --input-focus-shadow: 0 0 0 3px rgba(78, 140, 125, 0.16);
+
+  --button-border: 1px solid rgba(40, 70, 62, 0.16);
+  --button-radius: 10px;
+  --button-shadow: var(--shadow-xs);
+  --button-hover-shadow: var(--shadow-sm);
+  --button-active-shadow: var(--shadow-xs);
+  --button-active-filled-shadow: 0 12px 24px rgba(78, 140, 125, 0.28);
+
+  --card-border: 1px solid rgba(40, 70, 62, 0.14);
+  --card-radius: 14px;
+  --card-shadow: none;
+  --card-hover-shadow: var(--shadow-sm);
+  --card-selected-background: rgba(78, 140, 125, 0.12);
+  --card-selected-border-color: rgba(78, 140, 125, 0.42);
+  --card-selected-shadow: 0 12px 28px rgba(78, 140, 125, 0.2);
+
+  --panel-border: 1px solid rgba(255, 255, 255, 0.3);
+  --panel-radius: 14px;
+  --panel-shadow: 0 8px 20px rgba(40, 70, 62, 0.06);
+  --panel-divider-color: rgba(40, 70, 62, 0.08);
+
+  --data-panel-border: 1px solid rgba(40, 70, 62, 0.14);
+  --data-panel-shadow: none;
+
+  --menu-border: 1px solid rgba(40, 70, 62, 0.14);
+  --menu-shadow: var(--shadow-md);
+
+  --scrollbar-size: 8px;
+  --scrollbar-size-thin: 4px;
+  --scrollbar-radius: 999px;
+  --scrollbar-track-background: transparent;
+  --scrollbar-track-border-start: none;
+  --scrollbar-thumb-color: rgba(81, 99, 93, 0.55);
+  --scrollbar-thumb-hover-color: rgba(78, 140, 125, 0.7);
+  --scrollbar-thumb-border: 2px solid transparent;
+  --scrollbar-chat-thumb-border: 2px solid transparent;
+
+  --queue-border: 1px solid rgba(255, 255, 255, 0.38);
+  --queue-shadow: 0 18px 42px rgba(40, 70, 62, 0.14);
+
+  --reset-button-border: 1px solid rgba(194, 85, 74, 0.22);
+}
+
+/* —— 自定义背景层（仅玻璃主题）：与 --surface-opacity-scale 联动，参照 mica —— */
+body.theme-mist {
+  position: relative;
+  isolation: isolate;
+}
+
+body.theme-mist::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background-image: var(--custom-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+  opacity: 0.18;
+  pointer-events: none;
+  border-radius: calc(var(--shell-radius) + 1px);
+}
+
+body.has-custom-bg.theme-mist::before {
+  opacity: var(--custom-bg-opacity, 0.45);
+}
+
+/* 无自定义背景时铺一层青瓷微光，强化磨砂玻璃质感 */
+body.theme-mist:not(.has-custom-bg)::before {
+  background-image: linear-gradient(160deg, rgba(228, 238, 234, 0.34) 0%, rgba(210, 226, 220, 0.1) 100%);
+  opacity: 0.4;
+}
+
+body.theme-mist #root {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  isolation: isolate;
+  background-clip: padding-box;
+}
+
+/* 内容层顶部高光，模拟液态玻璃棱边 */
+body.theme-mist #root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(140% 110% at 0% 0%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.04) 58%, transparent 100%);
+}
+
+body.theme-mist #root > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* —— 选中签名元素：左缘 3px accent 渐变光脊 —— */
+body.theme-mist .history-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--card-selected-border-color), var(--accent-glow));
+  box-shadow: 0 0 8px var(--accent-glow);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* —— 选中签名元素：操作图标徽章点亮（--accent-soft 底 + --accent-color 描边）—— */
+body.theme-mist .history-item.selected .item-actions .btn-icon {
+  background: var(--accent-soft);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+/* —— 暗轨（系统暗色，未强制 light-mode）：深青瓷玻璃 —— */
+@media (prefers-color-scheme: dark) {
+  :root.theme-mist:not(.light-mode),
+  body.theme-mist:not(.light-mode) {
+    --bg-window: rgba(26, 34, 32, calc(0.78 * var(--surface-opacity-scale, 1)));
+    --bg-panel: rgba(38, 48, 45, 0.5);
+    --bg-input: rgba(255, 255, 255, 0.1);
+    --bg-element: rgba(46, 58, 54, 0.62);
+    --bg-button: rgba(255, 255, 255, 0.05);
+
+    --text-primary: #e6ede9;
+    --text-secondary: #a3b3ad;
+    --text-muted: #849790;
+
+    --accent-color: #6fa897;
+    --accent-color-rgb: 111, 168, 151;
+    --accent-hover: #7fb8a7;
+    --accent-soft: rgba(111, 168, 151, 0.16);
+    --accent-glow: rgba(111, 168, 151, 0.45);
+
+    --danger: #d98a7d;
+    --success: #74b591;
+    --sensitive: #d89a5e;
+    --sensitive-soft: rgba(216, 154, 94, 0.2);
+
+    --line-soft: rgba(255, 255, 255, 0.1);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --shadow-xs: 0 4px 12px rgba(0, 0, 0, 0.16);
+    --shadow-sm: 0 10px 24px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 18px 36px rgba(0, 0, 0, 0.24);
+    --shadow-lg: 0 22px 44px rgba(0, 0, 0, 0.28);
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+    --shell-background: rgba(26, 34, 32, calc(0.78 * var(--surface-opacity-scale, 1)));
+    --shell-border: 1px solid rgba(255, 255, 255, 0.08);
+    --shell-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+    --shell-backdrop-filter: blur(16px) saturate(140%);
+    --toolbar-border: 1px solid rgba(255, 255, 255, 0.08);
+    --panel-border: 1px solid rgba(255, 255, 255, 0.08);
+    --menu-border: 1px solid rgba(255, 255, 255, 0.08);
+
+    --card-selected-background: rgba(111, 168, 151, 0.16);
+    --card-selected-border-color: rgba(111, 168, 151, 0.5);
+    --card-selected-shadow: 0 12px 28px rgba(111, 168, 151, 0.24);
+  }
+
+  body.theme-mist:not(.light-mode):not(.has-custom-bg)::before {
+    background-image: linear-gradient(150deg, rgba(120, 168, 152, 0.12) 0%, rgba(60, 86, 78, 0.04) 100%);
+    opacity: 0.32;
+  }
+
+  body.theme-mist:not(.light-mode) #root::before {
+    background: radial-gradient(140% 110% at 0% 0%, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 58%, transparent 100%);
+  }
+}
+
+/* —— 暗轨（显式 dark-mode class）：与上方系统暗色取值一致 —— */
+:root.dark-mode.theme-mist,
+body.dark-mode.theme-mist {
+  --bg-window: rgba(26, 34, 32, calc(0.78 * var(--surface-opacity-scale, 1)));
+  --bg-panel: rgba(38, 48, 45, 0.5);
+  --bg-input: rgba(255, 255, 255, 0.1);
+  --bg-element: rgba(46, 58, 54, 0.62);
+  --bg-button: rgba(255, 255, 255, 0.05);
+
+  --text-primary: #e6ede9;
+  --text-secondary: #a3b3ad;
+  --text-muted: #849790;
+
+  --accent-color: #6fa897;
+  --accent-color-rgb: 111, 168, 151;
+  --accent-hover: #7fb8a7;
+  --accent-soft: rgba(111, 168, 151, 0.16);
+  --accent-glow: rgba(111, 168, 151, 0.45);
+
+  --danger: #d98a7d;
+  --success: #74b591;
+  --sensitive: #d89a5e;
+  --sensitive-soft: rgba(216, 154, 94, 0.2);
+
+  --line-soft: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --shadow-xs: 0 4px 12px rgba(0, 0, 0, 0.16);
+  --shadow-sm: 0 10px 24px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 18px 36px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 22px 44px rgba(0, 0, 0, 0.28);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  --shell-background: rgba(26, 34, 32, calc(0.78 * var(--surface-opacity-scale, 1)));
+  --shell-border: 1px solid rgba(255, 255, 255, 0.08);
+  --shell-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  --shell-backdrop-filter: blur(16px) saturate(140%);
+  --toolbar-border: 1px solid rgba(255, 255, 255, 0.08);
+  --panel-border: 1px solid rgba(255, 255, 255, 0.08);
+  --menu-border: 1px solid rgba(255, 255, 255, 0.08);
+
+  --card-selected-background: rgba(111, 168, 151, 0.16);
+  --card-selected-border-color: rgba(111, 168, 151, 0.5);
+  --card-selected-shadow: 0 12px 28px rgba(111, 168, 151, 0.24);
+}
+
+/* —— 减少透明度降级：切换不透明实色背景并移除 backdrop-filter（运行时开关响应式生效）—— */
+@media (prefers-reduced-transparency: reduce) {
+  /* 浅轨不透明回退 */
+  :root.theme-mist,
+  body.theme-mist {
+    --bg-window: #e8efec;
+    --bg-panel: #f3f7f5;
+    --shell-background: #e8efec;
+    --shell-backdrop-filter: none;
+  }
+
+  /* 暗轨不透明回退（系统暗色） */
+  @media (prefers-color-scheme: dark) {
+    :root.theme-mist:not(.light-mode),
+    body.theme-mist:not(.light-mode) {
+      --bg-window: #1a2220;
+      --bg-panel: #232e2b;
+      --shell-background: #1a2220;
+      --shell-backdrop-filter: none;
+    }
+  }
+
+  /* 暗轨不透明回退（显式 dark-mode class） */
+  :root.dark-mode.theme-mist,
+  body.dark-mode.theme-mist {
+    --bg-window: #1a2220;
+    --bg-panel: #232e2b;
+    --shell-background: #1a2220;
+    --shell-backdrop-filter: none;
+  }
+
+  /* 移除所有表面模糊，保证可读性与性能 */
+  body.theme-mist * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* —— 紧凑预览窗：玻璃透出，去除外壳描边与阴影 —— */
+body.compact-preview.theme-mist #root,
+body.theme-mist.compact-preview #root,
+body.dark-mode.compact-preview.theme-mist #root {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

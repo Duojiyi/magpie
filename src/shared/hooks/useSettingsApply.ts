@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { applyThemeClasses, normalizeThemeId } from "../config/themes";
+import { applyThemeClasses, normalizeThemeId, supportsSurfaceOpacity } from "../config/themes";
 import type { CardDensity } from "../../features/app/types";
 
 interface UseSettingsApplyOptions {
@@ -137,7 +137,13 @@ export const useSettingsApply = ({
     const root = document.documentElement;
     root.style.setProperty("--clipboard-item-font-size", `${clipboardItemFontSize}px`);
     root.style.setProperty("--clipboard-tag-font-size", `${clipboardTagFontSize}px`);
-    const scale = Math.min(2, Math.max(0, surfaceOpacity / 50));
-    root.style.setProperty("--surface-opacity-scale", scale.toString());
-  }, [clipboardItemFontSize, clipboardTagFontSize, surfaceOpacity, settingsLoaded]);
+    // --surface-opacity-scale 仅对玻璃主题（mist/dusk）有意义：
+    // 玻璃主题下按 surfaceOpacity 计算缩放并写入；扁平主题（ink/paper）移除该变量，避免残留影响实色表面。
+    if (supportsSurfaceOpacity(theme)) {
+      const scale = Math.min(2, Math.max(0, surfaceOpacity / 50));
+      root.style.setProperty("--surface-opacity-scale", scale.toString());
+    } else {
+      root.style.removeProperty("--surface-opacity-scale");
+    }
+  }, [clipboardItemFontSize, clipboardTagFontSize, surfaceOpacity, settingsLoaded, theme]);
 };

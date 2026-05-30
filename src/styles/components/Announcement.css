@@ -1,6 +1,6 @@
 /* =========================================
-   ANNOUNCEMENT SYSTEM - THEMED & REFINED
-   Aligns with Retro, Mica, Acrylic, Sticky Note, and Paper themes.
+   公告系统 - 主题化与精炼
+   适配 ink（墨玉）/ paper（宣纸）扁平主题，以及 theme-glass（mist 晨雾 / dusk 暮山）玻璃主题。
    ========================================= */
 
 /* --- Ticker Base (Global Default) --- */
@@ -161,35 +161,7 @@
    THEME SPECIFIC OVERRIDES
    ========================================= */
 
-/* --- 1. Sticky Note Theme --- */
-.theme-sticky-note .announcement-ticker {
-    background: var(--bg-toolbar);
-    border-bottom: 2px dashed var(--border-dark);
-    font-family: var(--font-main);
-    color: var(--text-primary);
-    height: 40px;
-}
-
-.theme-sticky-note .ticker-icon,
-.theme-sticky-note .ticker-count,
-.theme-sticky-note .ticker-fixed-close {
-    border-color: var(--border-dark);
-    background: transparent;
-}
-
-.theme-sticky-note .ticker-tag {
-    border-radius: 2px;
-    transform: rotate(-2deg);
-    box-shadow: 2px 2px 0 var(--shadow-color);
-}
-
-.theme-sticky-note .ticker-link {
-    font-family: var(--font-main);
-    text-decoration: none;
-    border-bottom: 1px solid var(--accent-color);
-}
-
-/* --- 2. Paper Theme --- */
+/* --- 1. 宣纸主题（paper，扁平） --- */
 .theme-paper .announcement-ticker {
     background: var(--bg-toolbar);
     border-bottom: 2px solid var(--text-primary);
@@ -218,84 +190,56 @@
 .theme-paper .ticker-tag.warning { color: #d97706; }
 .theme-paper .ticker-tag.update { color: #059669; }
 
-/* --- 3. Mica & Acrylic (Fluent Design) --- */
-.theme-mica .announcement-ticker,
-.theme-acrylic .announcement-ticker {
+/* --- 2. 玻璃主题（theme-glass：mist 晨雾 / dusk 暮山） --- */
+.theme-glass .announcement-ticker {
     background: var(--bg-panel);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
     border-bottom: 1px solid var(--line-soft);
     font-family: system-ui, -apple-system, sans-serif;
     height: 42px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.05);
 }
 
-.theme-mica .ticker-icon,
-.theme-acrylic .ticker-icon {
+.theme-glass .ticker-icon {
     border-right: 1px solid var(--line-soft);
     color: var(--text-secondary);
     background: transparent;
 }
 
-.theme-mica .ticker-count,
-.theme-acrylic .ticker-count,
-.theme-mica .ticker-fixed-close,
-.theme-acrylic .ticker-fixed-close {
+.theme-glass .ticker-count,
+.theme-glass .ticker-fixed-close {
     border-left: 1px solid var(--line-soft);
     background: transparent;
 }
 
-.theme-mica .ticker-tag,
-.theme-acrylic .ticker-tag {
+.theme-glass .ticker-tag {
     border-radius: 6px;
     font-weight: 600;
     box-shadow: none;
 }
 
-.theme-mica .ticker-fixed-close:hover,
-.theme-acrylic .ticker-fixed-close:hover {
+.theme-glass .ticker-fixed-close:hover {
     background: rgba(239, 68, 68, 0.1);
     color: #ef4444;
 }
 
-/* --- Dark Mode Logic for Modern Themes --- */
+/* --- 玻璃主题暗色模式 --- */
 @media (prefers-color-scheme: dark) {
-    .theme-mica:not(.light-mode) .announcement-ticker,
-    .theme-acrylic:not(.light-mode) .announcement-ticker {
+    .theme-glass:not(.light-mode) .announcement-ticker {
         background: rgba(30, 30, 30, 0.6);
         border-color: rgba(255, 255, 255, 0.1);
         color: #e0e0e0;
     }
 }
 
-.dark-mode .theme-mica .announcement-ticker,
-.dark-mode .theme-acrylic .announcement-ticker {
+.dark-mode .theme-glass .announcement-ticker {
     background: rgba(30, 30, 30, 0.6);
     border-color: rgba(255, 255, 255, 0.1);
     color: #e0e0e0;
 }
 
-/* --- Dark Mode: Sticky Note Theme --- */
-@media (prefers-color-scheme: dark) {
-    .theme-sticky-note:not(.light-mode) .announcement-ticker {
-        border-bottom-color: rgba(255, 212, 77, 0.25);
-    }
-    .theme-sticky-note:not(.light-mode) .ticker-icon,
-    .theme-sticky-note:not(.light-mode) .ticker-count,
-    .theme-sticky-note:not(.light-mode) .ticker-fixed-close {
-        border-color: rgba(255, 255, 255, 0.1);
-    }
-}
-.dark-mode .theme-sticky-note .announcement-ticker {
-    border-bottom-color: rgba(255, 212, 77, 0.25);
-}
-.dark-mode .theme-sticky-note .ticker-icon,
-.dark-mode .theme-sticky-note .ticker-count,
-.dark-mode .theme-sticky-note .ticker-fixed-close {
-    border-color: rgba(255, 255, 255, 0.1);
-}
-
-/* --- Dark Mode: Paper Theme --- */
+/* --- 暗色模式：宣纸主题（paper） --- */
 @media (prefers-color-scheme: dark) {
     .theme-paper:not(.light-mode) .announcement-ticker {
         border-bottom-color: rgba(255, 255, 255, 0.2);
@@ -433,13 +377,13 @@
     transform: translateY(1px);
 }
 
-/* --- Retro Specific Modal Overrides (Windows 95 style) --- */
-.theme-retro .announcement-modal {
+/* --- 墨玉主题（ink）弹窗特定覆盖（硬朗描边风格） --- */
+.theme-ink .announcement-modal {
     border-width: 3px;
     box-shadow: 8px 8px 0 var(--shadow-color, #000);
     border-radius: 0;
 }
-.theme-retro .announcement-btn {
+.theme-ink .announcement-btn {
     border-radius: 0;
     box-shadow: 2px 2px 0 var(--shadow-color, #000);
 }

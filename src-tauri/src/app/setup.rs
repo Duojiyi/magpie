@@ -384,10 +384,16 @@ pub struct StartupSettings {
 
 fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
     StartupSettings {
-        theme: repo
-            .get("app.theme")
-            .unwrap_or(Some("retro".to_string()))
-            .unwrap_or("retro".to_string()),
+        // 主题统一兜底为 ink，并先经 normalize_theme_id 归一旧别名（mica/acrylic/sakura/retro/
+        // sticky-note/store-* 等），使后端启动状态直接持有迁移后的新主题值，
+        // 与玻璃判定（mist/dusk）保持一致，避免后端用旧值导致玻璃效果不生效。
+        theme: {
+            let raw = repo
+                .get("app.theme")
+                .unwrap_or(Some("ink".to_string()))
+                .unwrap_or("ink".to_string());
+            crate::app::commands::ui_cmd::normalize_theme_id(&raw).to_string()
+        },
         persistent: repo
             .get("app.persistent")
             .unwrap_or(Some("true".to_string()))
@@ -1262,11 +1268,14 @@ fn setup_tray(app: &App, hide_tray: bool) {
 
 fn apply_initial_theme(app: &App) {
     let db_state = app.state::<DbState>();
-    let theme = db_state
+    // 读取已保存主题，兜底为 ink；并先经 normalize_theme_id 归一旧别名，
+    // 使主窗口首次可见前即应用 ink（或迁移后的玻璃主题）效果，首屏无 ink 以外主题的中间态。
+    let raw_theme = db_state
         .settings_repo
         .get("app.theme")
-        .unwrap_or(Some("retro".to_string()))
-        .unwrap_or("retro".to_string());
+        .unwrap_or(Some("ink".to_string()))
+        .unwrap_or("ink".to_string());
+    let theme = crate::app::commands::ui_cmd::normalize_theme_id(&raw_theme).to_string();
     let mode = db_state
         .settings_repo
         .get("app.color_mode")
