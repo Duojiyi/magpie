@@ -35,7 +35,18 @@
 
 ## 主题展示
 
-  <sub>新版 Magpie v0.4.x 主题截图正在准备中。全新视觉系统（低饱和静谧配色、液态玻璃变体）已随应用发布，截图定稿后将补充于此。</sub>
+  <sub>新版 Magpie v0.4.x 视觉系统设计预览（低饱和静谧配色 + 液态玻璃变体）。以下为设计稿，待新版界面落地后将替换为真实截图。</sub>
+
+  <table>
+    <tr>
+      <td align="center"><b>墨玉 Ink Jade</b><br><sub>扁平 · 默认</sub><br><img src="docs/images/theme-ink-jade.png" width="220" /></td>
+      <td align="center"><b>宣纸 Paper</b><br><sub>暖编辑</sub><br><img src="docs/images/theme-paper.png" width="220" /></td>
+    </tr>
+    <tr>
+      <td align="center"><b>晨雾 Mist</b><br><sub>液态玻璃 · 浅</sub><br><img src="docs/images/theme-mist.png" width="220" /></td>
+      <td align="center"><b>暮山 Dusk</b><br><sub>液态玻璃 · 深</sub><br><img src="docs/images/theme-dusk.png" width="220" /></td>
+    </tr>
+  </table>
 
 </div>
 

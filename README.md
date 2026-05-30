@@ -35,7 +35,18 @@ This repository is based on [`jimuzhe/tiez-clipboard`](https://github.com/jimuzh
 
 ## Theme Gallery
 
-  <sub>New Magpie v0.4.x theme captures are being prepared. The refreshed visual system (calm low-saturation palette, liquid-glass variants) ships in the app — screenshots will be added here once finalized.</sub>
+  <sub>Design preview of the new Magpie v0.4.x visual system (calm low-saturation palette + liquid-glass variants). These are design mockups; live screenshots will follow once the refreshed UI ships.</sub>
+
+  <table>
+    <tr>
+      <td align="center"><b>Ink Jade</b><br><sub>flat · default</sub><br><img src="docs/images/theme-ink-jade.png" width="220" /></td>
+      <td align="center"><b>Paper</b><br><sub>warm editorial</sub><br><img src="docs/images/theme-paper.png" width="220" /></td>
+    </tr>
+    <tr>
+      <td align="center"><b>Mist</b><br><sub>liquid glass · light</sub><br><img src="docs/images/theme-mist.png" width="220" /></td>
+      <td align="center"><b>Dusk</b><br><sub>liquid glass · dark</sub><br><img src="docs/images/theme-dusk.png" width="220" /></td>
+    </tr>
+  </table>
 
 </div>
 
