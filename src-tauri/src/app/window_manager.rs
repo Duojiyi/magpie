@@ -1,5 +1,6 @@
 use crate::app_state::SettingsState;
 use crate::global_state::*;
+use crate::infrastructure::repository::settings_repo::SettingsRepository;
 #[cfg(target_os = "windows")]
 use crate::infrastructure::windows_ext::WindowExt;
 use std::sync::atomic::Ordering;
@@ -376,24 +377,42 @@ pub fn toggle_window(app: &AppHandle) {
                     );
                 }
                 
-                // 显示窗口时重新应用 vibrancy：复用 9.1 的统一玻璃判定与 tint 取值，
-                // 玻璃主题（mist/dusk，含旧别名归一）应用带主题色 tint 的 acrylic，非玻璃主题清除 vibrancy。
+                // 显示窗口时重新应用 vibrancy：玻璃主题（mist/dusk）在 Win11 用 mica
+                // （DWM 仅采样壁纸一次、拖动零开销，与 0.4.1 mica 主题流畅手感对齐）；
+                // Win10 上 mica 不可用，玻璃主题降级为不透明实色（避免 acrylic 拖动卡顿）。
                 let settings = app.state::<SettingsState>();
-                let theme = settings.theme.lock().unwrap().clone();
-                if crate::app::commands::ui_cmd::is_glass_theme(&theme) {
-                    // 依据系统主题判定暗色模式，以选择 glass_tint 的浅/暗取值
-                    let is_dark = matches!(
-                        window.theme().unwrap_or(tauri::Theme::Dark),
-                        tauri::Theme::Dark
-                    );
-                    let tint = crate::app::commands::ui_cmd::glass_tint(&theme, is_dark);
-                    if let Err(err) = window_vibrancy::apply_acrylic(&window, Some(tint)) {
+                // 用 if let Ok 替代 unwrap：与全仓持锁风格一致，避免锁中毒时二次 panic
+                let theme = match settings.theme.lock() {
+                    Ok(g) => g.clone(),
+                    Err(_) => "ink".to_string(),
+                };
+                // 共享 mica 支持判定（与 set_theme / get_vibrancy_capability 同一阈值定义点）
+                let supports_mica_now = crate::app::commands::ui_cmd::supports_mica();
+                if crate::app::commands::ui_cmd::is_glass_theme(&theme) && supports_mica_now {
+                    // is_dark 优先级与 set_theme 保持一致：
+                    // app.color_mode == "light"/"dark" 用户主动覆盖优先 → 兜底用系统主题
+                    // 不一致曾导致用户强制覆盖系统色模式时，隐藏-再显示瞬间 mica 变体闪一下。
+                    let color_mode = app
+                        .state::<crate::database::DbState>()
+                        .settings_repo
+                        .get("app.color_mode")
+                        .ok()
+                        .flatten();
+                    let is_dark = match color_mode.as_deref() {
+                        Some("light") => false,
+                        Some("dark") => true,
+                        _ => matches!(
+                            window.theme().unwrap_or(tauri::Theme::Dark),
+                            tauri::Theme::Dark
+                        ),
+                    };
+                    if let Err(err) = window_vibrancy::apply_mica(&window, Some(is_dark)) {
                         eprintln!(
-                            "[主题] 显示窗口时重新应用 acrylic 玻璃效果失败（{theme}），窗口退化为不透明实色背景: {err}"
+                            "[主题] 显示窗口时重新应用 mica 玻璃效果失败（{theme}），窗口退化为不透明实色背景: {err}"
                         );
                     }
                 } else {
-                    // 非玻璃主题（ink/paper）：清除 vibrancy，使用不透明实色背景
+                    // 扁平主题（ink/paper）或 Win10 上的玻璃主题降级：清除 vibrancy，使用不透明实色背景
                     let _ = window_vibrancy::clear_vibrancy(&window);
                 }
                 

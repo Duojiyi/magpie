@@ -81,25 +81,34 @@ pub(crate) fn is_glass_theme(theme: &str) -> bool {
     matches!(normalize_theme_id(theme), "mist" | "dusk")
 }
 
-/// 玻璃主题的 acrylic 着色（RGBA），用于 `apply_acrylic`。
+/// 当前 Windows 是否支持 DWM mica（Win11，build ≥ 22000）。
 ///
-/// mist 取浅青瓷色（暗色模式下转深青瓷），dusk 取深梅紫炭色。
-/// 非玻璃主题不会调用此函数，兜底返回中性浅灰。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(crate) fn glass_tint(theme: &str, is_dark: bool) -> (u8, u8, u8, u8) {
-    match (normalize_theme_id(theme), is_dark) {
-        ("mist", false) => (228, 238, 234, 160), // 浅青瓷
-        ("mist", true) => (30, 40, 38, 150),      // 深青瓷
-        ("dusk", _) => (38, 32, 46, 180),         // 深梅紫炭
-        _ => (240, 240, 240, 40),                 // 兜底中性浅灰
+/// 单一权威阈值定义点——`set_theme` / `window_manager::toggle_window` 重应用 vibrancy /
+/// `get_vibrancy_capability` 三处共用此函数，避免阈值散落与未来漏改。
+/// 非 Windows 平台返回 false（mica 是 Windows 专有，macOS 走 NSVisualEffectMaterial 另判）。
+pub(crate) fn supports_mica() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows_version::OsVersion::current().build >= 22000
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
     }
 }
 
-/// 施加玻璃主题的 acrylic 效果；失败时记录中文日志并忽略，窗口退化为不透明实色不崩溃。
+/// 施加玻璃主题效果（Win11 用 mica：背景仅采样一次，拖动跟手零开销，性能远优于 acrylic）；
+/// 失败时记录中文日志并忽略，窗口退化为不透明实色不崩溃。
+///
+/// 设计权衡：mica vs acrylic
+/// - mica：DWM 仅在窗口显示时**采样桌面壁纸一次**，窗口拖动期间不重新采样。Win11 设计语言。
+/// - acrylic：DWM 实时模糊**当前窗口背后的桌面+其他窗口**，窗口高速移动时每帧重新采样并做高斯模糊，
+///   开销大且依赖显卡驱动。0.4.4 的 mist/dusk 曾用 acrylic + tint，导致拖动卡顿。
+/// - 本次改用 mica 以恢复 0.4.1 mica 主题的流畅手感（mica 不接受 tint，主题色调由前端 CSS 表面层提供）。
 #[cfg(target_os = "windows")]
 fn apply_glass_effect(window: &WebviewWindow, theme: &str, is_dark: bool) {
-    if let Err(err) = window_vibrancy::apply_acrylic(window, Some(glass_tint(theme, is_dark))) {
-        eprintln!("[主题] 应用 acrylic 玻璃效果失败（{theme}），窗口退化为不透明实色背景: {err}");
+    if let Err(err) = window_vibrancy::apply_mica(window, Some(is_dark)) {
+        eprintln!("[主题] 应用 mica 玻璃效果失败（{theme}），窗口退化为不透明实色背景: {err}");
     }
 }
 
@@ -198,21 +207,22 @@ pub fn set_theme(
 
         let build = windows_version::OsVersion::current().build;
         let is_win11 = build >= 22000;
-        // 支持 acrylic 的最低 Win10 版本（1803 / build 17134）。Win11（≥22000）天然满足。
-        let supports_acrylic = build >= 17134;
+        // mica 支持判定走共享函数 supports_mica()（Win11 唯一权威阈值定义点），
+        // Win10 上玻璃主题降级为不透明实色，避免 acrylic 的实时背景模糊在拖动时造成卡顿。
+        let supports_mica_now = supports_mica();
 
         match theme.as_str() {
-            // 玻璃主题 mist：Win11 与支持 acrylic 的 Win10（1803+）施加带主题色 tint 的 acrylic
-            "mist" if supports_acrylic => {
+            // 玻璃主题 mist：Win11 用 mica（DWM 仅采样壁纸一次，拖动跟手零开销）
+            "mist" if supports_mica_now => {
                 apply_glass_effect(&window, "mist", is_dark);
                 let _ = window.set_shadow(show_border);
             }
-            // 玻璃主题 dusk：同上，使用深梅紫炭 tint
-            "dusk" if supports_acrylic => {
+            // 玻璃主题 dusk：同上，mica 不接受 tint，深紫色调由前端 CSS 表面层提供
+            "dusk" if supports_mica_now => {
                 apply_glass_effect(&window, "dusk", is_dark);
                 let _ = window.set_shadow(show_border);
             }
-            // 扁平主题 ink / paper（及玻璃主题在不支持 acrylic 的旧系统上降级）：
+            // 扁平主题 ink / paper（及玻璃主题在 Win10 上的降级）：
             // 已 clear_vibrancy，使用不透明实色 + 阴影
             _ => {
                 let _ = window.set_shadow(show_border && is_win11 && !is_glass_theme(&theme));
@@ -241,6 +251,25 @@ pub fn set_theme(
 
     let _ = window.emit("theme-changed", theme);
     Ok(())
+}
+
+/// 查询当前平台是否支持玻璃 vibrancy。
+///
+/// - Windows 11（build ≥ 22000）：返回 true，玻璃主题（mist/dusk）使用 mica 渲染。
+/// - Windows 10：返回 false，玻璃主题降级为不透明实色背景；前端应据此挂 `no-vibrancy`
+///   class，使 mist.css / dusk.css 中的不透明 fallback 规则生效，避免透明窗口直接看到
+///   桌面壁纸。
+/// - 非 Windows（macOS 等）：返回 true（macOS 走 NSVisualEffectMaterial，玻璃可用）。
+#[tauri::command]
+pub fn get_vibrancy_capability() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        supports_mica()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,66 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.5] - 2026-06-13
+
+> 主题：**玻璃主题拖动卡顿真正解决 + 跨平台兜底 + 体验细节修正**。
+>
+> 0.4.4 通过原生 `data-tauri-drag-region` 修复了扁平主题（ink/paper）的拖动卡顿，
+> 但玻璃主题（mist/dusk）实测仍卡——根因不在拖动层而在玻璃成像方式：
+> 0.4.2 起 mist/dusk 走 DWM `apply_acrylic`，DWM 每帧实时高斯模糊「窗口背后的桌面 +
+> 其他窗口」，高速拖动时 GPU 与桌面合成器持续高负载。本次改用 `apply_mica`
+> （DWM 仅在窗口显示时采样桌面壁纸一次，拖动期间零重采样），与 0.4.1 mica 主题
+> 同等的流畅手感由此恢复。
+
+### 修复
+
+- **玻璃主题（mist/dusk）拖动卡顿真正解决**：将 Win11 玻璃主题的 DWM vibrancy 从
+  `apply_acrylic` 切换为 `apply_mica`。技术差异——
+  - acrylic：DWM 实时高斯模糊「当前窗口背后的桌面 + 其他窗口」，每帧重采样，开销
+    随显卡驱动浮动，是 0.4.2~0.4.4 玻璃主题拖动卡顿的根因。
+  - mica：DWM 仅在窗口显示时**采样桌面壁纸一次**，窗口拖动期间不重新采样。代价是
+    mica 不接受 tint，颜色调由前端 CSS 半透明表面层（mist 雾绿 / dusk 黄铜紫）提供。
+  - `set_theme` 与 `window_manager` 重新应用 vibrancy 的两条路径都走 mica。
+- **Win10 玻璃主题降级兜底**：mica 仅 Windows 11（build ≥ 22000）支持。Win10 上玻璃
+  主题（mist/dusk）改为不透明实色背景；前端通过 `get_vibrancy_capability` 查询并
+  挂 `no-vibrancy` class，触发 `mist.css` / `dusk.css` 中的实色 fallback 规则。
+  能力查询走模块级缓存 + localStorage 兜底，**首帧前同步可得**，避免 Win10 用户
+  切换玻璃主题时出现「透明窗口直透桌面」的闪烁。
+- **`is_dark` 在 set_theme 与 re-apply 路径口径一致**：原 `window_manager` 重新
+  应用 vibrancy 时仅读系统主题，与 `set_theme` 优先读 `app.color_mode` 不一致。
+  用户在设置里强制覆盖系统色模式（如 light + 系统暗色）时，隐藏-再显示窗口会
+  出现 mica 浅暗变体闪烁；现统一为 `set_theme` 的优先级。
+- **表情面板 fallback 同步**：`EmojiPanel.tsx` 的 `FALLBACK_GROUPS`（`fetch
+  /emoji-data.json` 失败时的兜底）此前仍含 0.4.4 已替换的 ZWJ 组合 emoji 与
+  「键盘」中文字面量，与正式 JSON 不一致。现完全同步，并加注释要求未来同步修改。
+
+### 改进
+
+- **`is_win11 = build >= 22000` 阈值收敛**：抽 `supports_mica()` 函数到 `ui_cmd.rs`
+  作为唯一权威定义点，`set_theme` / `window_manager` re-apply / `get_vibrancy_capability`
+  三处共用，避免阈值散落与未来漏改。
+- **代码精简**：删除 `glass_tint` 死函数（acrylic 路径已弃用，mica 不接受 tint，无
+  消费者）；`window_manager` re-apply 的 `lock().unwrap()` 改为 `if let Ok` 兜底，
+  与全仓持锁风格一致，消除锁中毒时二次 panic 风险。
+- **`backdrop-filter` 上限统一**：`file-transfer.css` 的 `.wt-fullscreen-editor`
+  （30px → 16px）与 `.wt-context-menu`（20px → 16px）模糊半径下调到 ≤ 16px，与
+  玻璃主题表面约束保持一致，对低端 GPU 更友好。
+- **CHANGELOG 链接补全**：底部 reference link 区段补齐 v0.4.1~v0.4.4，确保历史
+  版本的标题链接均可点击跳转 GitHub Release。
+
+### 兼容性
+
+- **Windows 11**（build ≥ 22000）：玻璃主题（mist/dusk）使用 mica，拖动跟手零延迟。
+- **Windows 10**：玻璃主题降级为不透明实色背景（CSS fallback token 已就绪），
+  仍可读、仍流畅；如需 acrylic 的实时桌面透出效果需停留在 Win11 平台。该取舍
+  换来的是 0.4.1 同等流畅的拖动手感。
+- 无数据变更，从 v0.4.4 升级不影响任何用户数据与设置。
+
+### 已知限制
+
+- mica 不接受 tint，mist 的雾绿与 dusk 的黄铜紫色调完全由前端 CSS 半透明表面层
+  提供。在某些壁纸下两个主题的 DWM 底层可能视觉接近，但 CSS 表面色仍可清晰区分。
+
 ## [0.4.4] - 2026-06-13
 
 > 主题：**拖动卡顿真正修复 + 表情包体验优化 + 托盘文案修正**。
@@ -237,6 +297,11 @@
 - README 调整：更新仓库链接指向本 fork，移除上游的赞助和社区入口，新增 fork 与协议合规说明。
 - 补充 `vitest` 开发依赖以让 `tsc` 顺利通过对仓库内 `*.test.ts` 文件的类型检查。
 
+[0.4.5]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.5
+[0.4.4]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.4
+[0.4.3]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.3
+[0.4.2]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.2
+[0.4.1]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.1
 [0.4.0]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.0
 [0.3.8]: https://github.com/Duojiyi/magpie/releases/tag/v0.3.8
 [0.3.7]: https://github.com/Duojiyi/magpie/releases/tag/v0.3.7

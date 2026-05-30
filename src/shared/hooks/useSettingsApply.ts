@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyThemeClasses, normalizeThemeId, supportsSurfaceOpacity } from "../config/themes";
+import { applyVibrancyClass } from "../lib/vibrancyCapability";
 import type { CardDensity } from "../../features/app/types";
 
 interface UseSettingsApplyOptions {
@@ -65,6 +66,12 @@ export const useSettingsApply = ({
     };
 
     applyThemeClasses(normalizedTheme, root, body);
+
+    // M1（v0.4.5）：在不支持 mica 的平台（Win10）上，玻璃主题需挂 no-vibrancy class，
+    // 让 mist.css / dusk.css 的不透明 fallback 规则生效，避免透明窗口直接看到桌面壁纸。
+    // 同步从 vibrancyCapability 模块缓存取值——缓存由 useSettingsInit 在 useLayoutEffect
+    // 首帧前已完成读取与异步刷新，此处不再重复 invoke、零异步竞态、零闪烁。
+    applyVibrancyClass(root, body);
 
     if (compactMode) {
       body.classList.add("compact-mode");

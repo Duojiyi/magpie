@@ -351,3 +351,50 @@ body.dark-mode.compact-preview.theme-dusk #root {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+
+/* —— v0.4.5 M1：no-vibrancy 平台兜底（如 Win10 不支持 mica）——
+ * 由前端 useSettingsApply 在 invoke("get_vibrancy_capability") 返回 false 时挂 class。
+ * dusk 浅色 0.56 / 暗色 0.54 不透明度过低，无 vibrancy 时透出桌面非常明显，必须强制实色。
+ * 实色 token 与 prefers-reduced-transparency 块完全一致。 */
+:root.no-vibrancy.theme-dusk,
+body.no-vibrancy.theme-dusk {
+  --bg-window: #ece6f0;
+  --bg-panel: #f4f0f6;
+  --shell-background: #ece6f0;
+  --shell-backdrop-filter: none;
+}
+
+:root.no-vibrancy.dark-mode.theme-dusk,
+body.no-vibrancy.dark-mode.theme-dusk {
+  --bg-window: #1f1a26;
+  --bg-panel: #2a2433;
+  --shell-background: #1f1a26;
+  --shell-backdrop-filter: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root.no-vibrancy.theme-dusk:not(.light-mode),
+  body.no-vibrancy.theme-dusk:not(.light-mode) {
+    --bg-window: #1f1a26;
+    --bg-panel: #2a2433;
+    --shell-background: #1f1a26;
+    --shell-backdrop-filter: none;
+  }
+}
+
+/* no-vibrancy + dusk：移除所有 backdrop-filter，强制 body 实色，关闭 ::before 玻璃渐变层 */
+body.no-vibrancy.theme-dusk *,
+body.no-vibrancy.theme-dusk #root {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body.no-vibrancy.theme-dusk {
+  background-color: var(--bg-window) !important;
+}
+
+body.no-vibrancy.theme-dusk:not(.has-custom-bg)::before,
+body.no-vibrancy.theme-dusk #root::before {
+  display: none !important;
+}

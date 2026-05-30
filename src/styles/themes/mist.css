@@ -324,3 +324,40 @@ body.dark-mode.compact-preview.theme-mist #root {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+
+/* —— v0.4.5 M1：no-vibrancy 平台兜底（如 Win10 不支持 mica）——
+ * 由前端 useSettingsApply 在 invoke("get_vibrancy_capability") 返回 false 时挂 class。
+ * 玻璃主题在无 vibrancy 的平台必须切实色背景，否则 transparent 窗口会直接看到桌面壁纸。
+ * 实色 token 与 prefers-reduced-transparency 块完全一致，避免色调漂移。 */
+:root.no-vibrancy.theme-mist,
+body.no-vibrancy.theme-mist {
+  --bg-window: #e8efec;
+  --bg-panel: #f3f7f5;
+  --shell-background: #e8efec;
+  --shell-backdrop-filter: none;
+}
+
+:root.no-vibrancy.dark-mode.theme-mist,
+body.no-vibrancy.dark-mode.theme-mist {
+  --bg-window: #1a2220;
+  --bg-panel: #232e2b;
+  --shell-background: #1a2220;
+  --shell-backdrop-filter: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root.no-vibrancy.theme-mist:not(.light-mode),
+  body.no-vibrancy.theme-mist:not(.light-mode) {
+    --bg-window: #1a2220;
+    --bg-panel: #232e2b;
+    --shell-background: #1a2220;
+    --shell-backdrop-filter: none;
+  }
+}
+
+/* no-vibrancy + 玻璃主题：移除所有表面模糊，提升可读性 */
+body.no-vibrancy.theme-mist * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

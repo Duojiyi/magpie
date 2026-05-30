@@ -4,6 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 import { DEFAULT_THEME, normalizeThemeId, applyThemeClasses } from "../config/themes";
 import type { Locale } from "../types";
 import { isTauriRuntime } from "../lib/tauriRuntime";
+import {
+  applyVibrancyClass,
+  initVibrancyCapabilityCache,
+  prefetchVibrancyCapability
+} from "../lib/vibrancyCapability";
 
 interface UseSettingsInitOptions {
   setAppSettings: (settings: Record<string, string>) => void;
@@ -26,8 +31,22 @@ export const useSettingsInit = ({
 
   // 首帧渲染：在浏览器绘制前于 DOM 根节点应用默认 theme-ink class（见 Requirement 3.9、3.10）。
   // 保证 get_settings 归一完成前根容器即持有恰好一个有效 theme class，迁移过程不白屏。
+  // 同时读 localStorage 缓存的 vibrancy 能力值，首帧即挂正确的 no-vibrancy class
+  // （Win10 玻璃主题用户避免「首次切到 mist/dusk 时透明窗口直透桌面」的闪烁）。
   useLayoutEffect(() => {
+    initVibrancyCapabilityCache();
     applyThemeClasses(DEFAULT_THEME, document.documentElement, document.body);
+    applyVibrancyClass(document.documentElement, document.body);
+    // 异步刷新权威值（同台机器 OS 版本恒定，仅在首次安装或 Win10→Win11 升级时会变）
+    if (isTauriRuntime()) {
+      prefetchVibrancyCapability()
+        .then(() => {
+          applyVibrancyClass(document.documentElement, document.body);
+        })
+        .catch(() => {
+          // prefetch 内部已兜底，不会再抛
+        });
+    }
   }, []);
 
   useEffect(() => {
