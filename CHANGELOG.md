@@ -11,7 +11,7 @@
 ### 新增
 
 - **v11 液态玻璃界面 Beta**：引入全新的视觉层级、搜索区、内容卡片和底部状态栏设计，让剪贴板主界面更接近桌面软件质感。
-- **Release Actions 增加 macOS universal 构建**：发布 workflow 现在会在打 tag 时同时构建 Windows `nsis/msi` 和 macOS `app/dmg`，Mac 包覆盖 Apple Silicon 与 Intel。
+- **Release Actions 增加 macOS universal 构建**：发布 workflow 现在会在打 tag 或手动运行时同时构建 Windows `nsis/msi` 和 macOS `app/dmg`，并上传为 Actions artifacts；Mac 包覆盖 Apple Silicon 与 Intel。
 
 ### 改进
 
@@ -21,7 +21,7 @@
 
 ### 兼容性
 
-- Windows updater 的 `latest.json` 仍保持 Windows-only，避免多平台 release job 覆盖同一个 updater manifest；macOS updater manifest 待后续补齐签名与平台条目。
+- GitHub Release 资产上传仍需要仓库 Actions token 具备 `contents: write` 权限；当前 workflow 先稳定产出 Actions artifacts。Windows updater 的 `latest.json` 与 macOS updater manifest 待权限和平台签名补齐后再接入。
 - macOS 包已进入 CI 构建通道，但剪贴板监听、系统热键与窗口焦点等平台行为仍需要真机 QA 后再标为稳定。
 
 ## [0.4.5] - 2026-05-31

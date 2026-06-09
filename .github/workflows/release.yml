@@ -1,4 +1,4 @@
-name: "Publish Release"
+name: "Build Release Bundles"
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 jobs:
   publish-tauri:
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -17,9 +17,17 @@ jobs:
           - platform: 'windows-latest'
             args: '--bundles nsis,msi'
             rustTargets: 'x86_64-pc-windows-msvc'
+            artifactName: 'windows'
+            uploadPaths: |
+              src-tauri/target/release/bundle/nsis/*
+              src-tauri/target/release/bundle/msi/*
           - platform: 'macos-latest'
             args: '--target universal-apple-darwin --bundles app,dmg'
             rustTargets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            artifactName: 'macos-universal'
+            uploadPaths: |
+              src-tauri/target/universal-apple-darwin/release/bundle/dmg/*
+              src-tauri/target/universal-apple-darwin/release/bundle/macos/*
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -38,95 +46,30 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      - name: extract release notes from CHANGELOG
-        id: changelog
-        shell: pwsh
-        run: |
-          $refName = "${{ github.ref_name }}"
-          $packageVersion = (Get-Content package.json | ConvertFrom-Json).version
-          $tag = if ($refName -match '^v\d') { $refName } else { "v$packageVersion" }
-          $version = $tag.TrimStart('v')
-          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
-          $regex = "(?ms)^## \[$([regex]::Escape($version))\].*?(?=^## \[|\z)"
-          $m = [regex]::Match($changelog, $regex)
-          if (-not $m.Success) {
-            $body = "See CHANGELOG.md for details."
-          } else {
-            $body = $m.Value.Trim()
-          }
-          $body | Out-File -FilePath release_notes.md -Encoding utf8 -NoNewline
-          Write-Host "----- release notes -----"
-          Write-Host $body
-
-      - name: build & publish bundles
+      - name: build bundles
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: "Magpie v__VERSION__"
-          releaseBody: "See CHANGELOG.md for details."
-          releaseDraft: false
-          prerelease: false
           args: ${{ matrix.args }}
-          includeUpdaterJson: false
 
-      - name: update release body with CHANGELOG
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $tag = "v$version"
-          $body = Get-Content release_notes.md -Raw
-          gh release edit "$tag" --notes "$body" --repo $env:GITHUB_REPOSITORY
+      - name: upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: magpie-${{ matrix.artifactName }}
+          path: ${{ matrix.uploadPaths }}
+          if-no-files-found: error
 
       - name: build portable bundle
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: npm run build:portable
 
-      - name: upload portable bundle
+      - name: upload portable artifact
         if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $portable = Get-ChildItem -Path artifacts/portable -Filter '*.zip' | Select-Object -First 1
-          if (-not $portable) { throw 'portable zip missing' }
-          gh release upload "v$version" "$($portable.FullName)" --repo $env:GITHUB_REPOSITORY --clobber
-
-      - name: generate latest.json for updater
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $tag = "v$version"
-          # tauri-action 已签名 nsis exe 并生成 .sig
-          $nsis = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
-          $sig  = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter '*-setup.exe.sig' | Select-Object -First 1
-          if (-not $nsis -or -not $sig) {
-            Write-Host 'no signed nsis or .sig found, skip latest.json (updater disabled until signed build)'
-            exit 0
-          }
-          $sigContent = Get-Content $sig.FullName -Raw
-          $assetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$($nsis.Name)"
-          $manifest = @{
-            version = $version
-            notes = "See CHANGELOG.md for details"
-            pub_date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            platforms = @{
-              'windows-x86_64' = @{
-                signature = $sigContent.Trim()
-                url = $assetUrl
-              }
-            }
-          } | ConvertTo-Json -Depth 5
-          Set-Content -Path latest.json -Value $manifest -Encoding utf8 -NoNewline
-          gh release upload "$tag" 'latest.json' --repo $env:GITHUB_REPOSITORY --clobber
+        uses: actions/upload-artifact@v4
+        with:
+          name: magpie-windows-portable
+          path: artifacts/portable/*.zip
+          if-no-files-found: error
