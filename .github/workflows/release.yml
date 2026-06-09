@@ -71,7 +71,7 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
 
       - name: update release body with CHANGELOG
         if: matrix.platform == 'windows-latest'

@@ -14,6 +14,7 @@ use crate::infrastructure::repository::settings_repo::{
     SettingsRepository, SqliteSettingsRepository,
 };
 use crate::infrastructure::repository::tag_repo::SqliteTagRepository;
+#[cfg(target_os = "windows")]
 use crate::infrastructure::windows_ext::WindowExt;
 use crate::services::encryption_queue::init_encryption_queue;
 use crate::services::sensitive_align::spawn_sensitive_alignment;
@@ -74,7 +75,10 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let db_path_str = db_path.to_string_lossy();
     let conn = database::init_db(&db_path_str).map_err(|e| {
         let err_msg = format!("数据库初始化失败: {}", e);
+        #[cfg(target_os = "windows")]
         WindowExt::show_error_box("Magpie 启动错误", &err_msg);
+        #[cfg(not(target_os = "windows"))]
+        eprintln!("Magpie startup error: {}", err_msg);
         e
     })?;
     let conn_arc = std::sync::Arc::new(std::sync::Mutex::new(conn));
