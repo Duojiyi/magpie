@@ -51,12 +51,21 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CARGO_TERM_COLOR: never
+          NO_COLOR: 1
         run: |
           $buildOutput = npm run tauri -- build ${{ matrix.args }} 2>&1 | Tee-Object -FilePath tauri-build.log
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
-            $tail = ($buildOutput | Select-Object -Last 120) -join "`n"
-            $escaped = $tail -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            $matches = Select-String -Path tauri-build.log -Pattern 'error|failed|cannot|could not|not found|No such|denied|Exit status|Command' -CaseSensitive:$false |
+              Select-Object -First 60 |
+              ForEach-Object { "$($_.LineNumber): $($_.Line)" }
+            if ($matches) {
+              $snippet = ($matches -join "`n")
+            } else {
+              $snippet = ($buildOutput | Select-Object -Last 80) -join "`n"
+            }
+            $escaped = $snippet -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
             Write-Output "::error title=Tauri build failed::$escaped"
             exit $exitCode
           }
