@@ -7,6 +7,7 @@ import { densityListKey } from "../lib/cardDensity";
 
 type VirtuosoListContext = {
     header?: React.ReactNode;
+    footer?: React.ReactNode;
     hasMore: boolean;
     isLoading: boolean;
 };
@@ -18,19 +19,22 @@ const ListHeader = ({ context }: { context?: VirtuosoListContext }) => {
 
 const ListFooter = ({ context }: { context?: VirtuosoListContext }) => {
     if (!context) return null;
-    const { isLoading, hasMore } = context;
-    if (!isLoading && !hasMore) return null;
+    const { footer, isLoading, hasMore } = context;
+    if (!isLoading && !hasMore) return footer ? <>{footer}</> : null;
 
     return (
-        <div style={{
-            padding: '20px',
-            textAlign: 'center',
-            opacity: 0.6,
-            fontSize: '12px',
-            color: 'var(--text-secondary)'
-        }}>
-            {isLoading ? '加载中...' : '加载更多...'}
-        </div>
+        <>
+            <div style={{
+                padding: '20px',
+                textAlign: 'center',
+                opacity: 0.6,
+                fontSize: '12px',
+                color: 'var(--text-secondary)'
+            }}>
+                {isLoading ? '加载中...' : '加载更多...'}
+            </div>
+            {footer}
+        </>
     );
 };
 
@@ -47,7 +51,8 @@ const VirtualClipboardList = React.forwardRef<VirtualClipboardListHandle, Virtua
             onScroll,
             compactMode,
             cardDensity,
-            header
+            header,
+            footer
         } = props;
 
         const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -176,9 +181,10 @@ const VirtualClipboardList = React.forwardRef<VirtualClipboardListHandle, Virtua
 
         const context = useMemo(() => ({
             header,
+            footer,
             hasMore,
             isLoading
-        }), [header, hasMore, isLoading]);
+        }), [header, footer, hasMore, isLoading]);
 
         return (
             <div className="virtual-list-wrapper" style={{ height: '100%', width: '100%' }} onWheel={handleWheel}>
@@ -206,5 +212,3 @@ VirtualClipboardList.displayName = 'VirtualClipboardList';
 
 export { VirtualClipboardList };
 export default VirtualClipboardList;
-
-

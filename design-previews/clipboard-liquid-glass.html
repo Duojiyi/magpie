@@ -1,0 +1,1740 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Magpie Liquid Glass Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #10141a;
+      --ink-2: #3d4752;
+      --ink-3: #687581;
+      --surface: rgba(255, 255, 255, 0.84);
+      --surface-strong: rgba(255, 255, 255, 0.97);
+      --glass: rgba(255, 255, 255, 0.48);
+      --glass-strong: rgba(255, 255, 255, 0.7);
+      --line: rgba(18, 28, 42, 0.14);
+      --line-strong: rgba(0, 92, 230, 0.4);
+      --jade: #0869df;
+      --jade-dark: #050a12;
+      --blue: #087ea4;
+      --copper: #8b6d52;
+      --violet: #5f6580;
+      --focus: rgba(0, 108, 255, 0.48);
+      --jade-soft: rgba(0, 108, 255, 0.12);
+      --blue-soft: rgba(8, 126, 164, 0.1);
+      --copper-soft: rgba(139, 109, 82, 0.11);
+      --violet-soft: rgba(95, 101, 128, 0.1);
+      --radius-window: 30px;
+      --radius-card: 14px;
+      --radius-control: 18px;
+      --sans: "SF Pro Text", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+      --shadow-window:
+        0 54px 132px rgba(10, 16, 24, 0.29),
+        0 24px 58px rgba(0, 92, 230, 0.13),
+        -18px 34px 74px rgba(8, 126, 164, 0.08),
+        18px 42px 90px rgba(28, 34, 44, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.88) inset;
+      --shadow-glass:
+        0 18px 42px rgba(16, 24, 34, 0.13),
+        0 1px 0 rgba(255, 255, 255, 0.76) inset;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-height: 100%;
+      background: #eef2f5;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      background:
+        linear-gradient(145deg, rgba(249, 250, 251, 0.98) 0%, rgba(225, 231, 237, 0.96) 48%, rgba(244, 246, 248, 0.98) 100%),
+        #eef2f5;
+      overflow-x: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    body::before {
+      background:
+        radial-gradient(920px 520px at 78% 16%, rgba(0, 108, 255, 0.18), transparent 60%),
+        radial-gradient(640px 480px at 16% 88%, rgba(8, 126, 164, 0.12), transparent 62%),
+        linear-gradient(112deg, rgba(7, 16, 31, 0.08), transparent 30%),
+        linear-gradient(10deg, transparent 62%, rgba(255, 255, 255, 0.42));
+      mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+      opacity: 0.86;
+    }
+
+    body::after {
+      background:
+        linear-gradient(101deg, transparent 0%, rgba(255, 255, 255, 0.34) 34%, transparent 47%),
+        radial-gradient(520px 260px at 60% 72%, rgba(0, 108, 255, 0.06), transparent 70%);
+      mask-image: linear-gradient(180deg, transparent 0%, #000 16%, transparent 84%);
+      opacity: 0.58;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .composition {
+      position: relative;
+      z-index: 1;
+      width: min(1120px, 100%);
+      min-height: min(812px, calc(100vh - 56px));
+      display: grid;
+      place-items: center;
+    }
+
+    .brief {
+      position: absolute;
+      left: 28px;
+      top: 58px;
+      z-index: 4;
+      width: max-content;
+      padding: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.46) inset;
+      -webkit-backdrop-filter: blur(16px) saturate(132%);
+      backdrop-filter: blur(16px) saturate(132%);
+      opacity: 0.5;
+    }
+
+    .eyebrow {
+      width: max-content;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid rgba(0, 108, 255, 0.16);
+      border-radius: 999px;
+      color: #41516b;
+      background: rgba(255, 255, 255, 0.42);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.74) inset;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .brief h1 {
+      display: none;
+      margin: 10px 0 0;
+      max-width: 11ch;
+      color: #0f1714;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .brief p {
+      display: none;
+      margin: 0;
+      color: var(--ink-2);
+      font-size: 12px;
+      line-height: 1.62;
+    }
+
+    .design-notes {
+      display: none;
+      gap: 4px;
+      margin-top: 10px;
+    }
+
+    .note {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      align-items: center;
+      min-height: 36px;
+      padding: 6px 0;
+      border-top: 1px solid rgba(23, 32, 28, 0.12);
+      color: var(--ink-2);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .note-icon {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(0, 108, 255, 0.16);
+      border-radius: 12px;
+      color: var(--jade);
+      background: rgba(255, 255, 255, 0.66);
+    }
+
+    .note-icon svg,
+    .brand-mark svg,
+    .icon-button svg,
+    .rail-button svg,
+    .clip-icon svg,
+    .search svg,
+    .status svg,
+    .dock-button svg,
+    .quick-action svg,
+    .file-row svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .preview-stage {
+      position: relative;
+      width: 100%;
+      min-height: 806px;
+      display: grid;
+      place-items: center;
+      perspective: 1300px;
+    }
+
+    .preview-stage::before,
+    .preview-stage::after {
+      content: "";
+      position: absolute;
+      pointer-events: none;
+      border-radius: 36px;
+      border: 1px solid rgba(255, 255, 255, 0.42);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.12)),
+        linear-gradient(115deg, rgba(0, 108, 255, 0.06), transparent 48%, rgba(8, 126, 164, 0.06));
+      box-shadow: 0 24px 56px rgba(16, 24, 34, 0.11), 0 1px 0 rgba(255, 255, 255, 0.58) inset;
+      -webkit-backdrop-filter: blur(18px) saturate(138%);
+      backdrop-filter: blur(18px) saturate(138%);
+      opacity: 0.7;
+    }
+
+    .preview-stage::before {
+      width: 500px;
+      height: 620px;
+      right: 120px;
+      top: 72px;
+      transform: rotate(4deg) translateZ(-80px);
+    }
+
+    .preview-stage::after {
+      width: 430px;
+      height: 500px;
+      left: 188px;
+      bottom: 30px;
+      transform: rotate(-4deg) translateZ(-110px);
+    }
+
+    .stage-glow {
+      position: absolute;
+      inset: 24px 36px;
+      border-radius: 44px;
+      background:
+        linear-gradient(115deg, rgba(255, 255, 255, 0.24), transparent 28%),
+        radial-gradient(560px 360px at 70% 20%, rgba(0, 108, 255, 0.16), transparent 58%),
+        linear-gradient(210deg, rgba(8, 126, 164, 0.12), transparent 48%),
+        linear-gradient(340deg, rgba(16, 24, 34, 0.08), transparent 52%);
+      filter: saturate(108%);
+      opacity: 0.98;
+      pointer-events: none;
+    }
+
+    .memory-card {
+      position: absolute;
+      width: 390px;
+      min-height: 82px;
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.62);
+      border-radius: 22px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.34)),
+        rgba(255, 255, 255, 0.38);
+      box-shadow: 0 20px 42px rgba(16, 24, 34, 0.12), 0 1px 0 rgba(255, 255, 255, 0.72) inset;
+      -webkit-backdrop-filter: blur(18px) saturate(142%);
+      backdrop-filter: blur(18px) saturate(142%);
+      opacity: 0.56;
+      pointer-events: none;
+    }
+
+    .memory-card:nth-child(1) {
+      top: 94px;
+      right: -18px;
+      transform: rotate(2deg) translateZ(-40px);
+    }
+
+    .memory-card:nth-child(2) {
+      top: 332px;
+      left: -12px;
+      transform: rotate(-2.4deg) translateZ(-60px);
+    }
+
+    .memory-card:nth-child(3) {
+      bottom: 94px;
+      right: 8px;
+      transform: rotate(1.4deg) translateZ(-80px);
+    }
+
+    .memory-token {
+      width: 38px;
+      height: 38px;
+      border-radius: 14px;
+      background:
+        linear-gradient(135deg, rgba(0, 108, 255, 0.2), rgba(8, 126, 164, 0.14)),
+        rgba(255, 255, 255, 0.42);
+    }
+
+    .memory-lines {
+      display: grid;
+      gap: 8px;
+    }
+
+    .memory-lines span {
+      display: block;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(19, 33, 50, 0.12);
+    }
+
+    .memory-lines span:nth-child(2) {
+      width: 62%;
+    }
+
+    .window {
+      position: relative;
+      z-index: 2;
+      width: 568px;
+      height: 772px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.78);
+      border-radius: var(--radius-window);
+      background:
+        radial-gradient(760px 420px at 18% -10%, rgba(0, 108, 255, 0.12), transparent 54%),
+        radial-gradient(620px 400px at 108% 104%, rgba(17, 24, 39, 0.08), transparent 58%),
+        linear-gradient(180deg, rgba(254, 255, 255, 0.84), rgba(239, 245, 249, 0.91)),
+        rgba(247, 250, 251, 0.86);
+      box-shadow: var(--shadow-window);
+      -webkit-backdrop-filter: blur(22px) saturate(148%);
+      backdrop-filter: blur(22px) saturate(148%);
+      isolation: isolate;
+    }
+
+    .window::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 8;
+      pointer-events: none;
+      border-radius: inherit;
+      background:
+        radial-gradient(520px 86px at 72% 0%, rgba(0, 108, 255, 0.18), transparent 72%),
+        linear-gradient(128deg, rgba(255, 255, 255, 0.86), transparent 18%, rgba(255, 255, 255, 0.15) 48%, transparent 70%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 22%);
+      mix-blend-mode: screen;
+      opacity: 0.84;
+    }
+
+    .window::after {
+      content: "";
+      position: absolute;
+      inset: 1px;
+      z-index: 9;
+      pointer-events: none;
+      border-radius: calc(var(--radius-window) - 1px);
+      box-shadow:
+        0 0 0 1px rgba(0, 108, 255, 0.12) inset,
+        0 -1px 0 rgba(18, 26, 36, 0.12) inset;
+    }
+
+    .content-bed {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background:
+        linear-gradient(90deg, rgba(7, 17, 31, 0.095) 0 86px, transparent 86px),
+        radial-gradient(460px 240px at 60% 10%, rgba(0, 108, 255, 0.07), transparent 64%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(239, 245, 249, 0.91)),
+        #f6f8fa;
+    }
+
+    .content-bed::before {
+      content: "";
+      position: absolute;
+      inset: 104px 12px auto;
+      height: 220px;
+      border-radius: 999px;
+      background:
+        linear-gradient(90deg, rgba(0, 108, 255, 0.18), transparent 38%),
+        linear-gradient(130deg, transparent 28%, rgba(8, 126, 164, 0.12), transparent 76%);
+      filter: blur(24px);
+      opacity: 0.75;
+    }
+
+    .content-bed::after {
+      content: "";
+      position: absolute;
+      top: 96px;
+      bottom: 0;
+      left: 86px;
+      width: 1px;
+      background: linear-gradient(180deg, transparent, rgba(0, 108, 255, 0.18), transparent);
+      opacity: 0.7;
+    }
+
+    .top-glass {
+      position: relative;
+      z-index: 12;
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 40px;
+    }
+
+    .brand {
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      height: 36px;
+      padding: 0 14px 0 8px;
+      border: 1px solid rgba(255, 255, 255, 0.64);
+      border-radius: 999px;
+      color: #0e1714;
+      background: rgba(255, 255, 255, 0.52);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72) inset;
+      -webkit-backdrop-filter: blur(18px) saturate(158%);
+      backdrop-filter: blur(18px) saturate(158%);
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      color: #fff;
+      background:
+        linear-gradient(145deg, #10243c, #03070d);
+      box-shadow: 0 9px 20px rgba(0, 92, 230, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+    }
+
+    .window-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.56);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.38);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+      -webkit-backdrop-filter: blur(18px) saturate(158%);
+      backdrop-filter: blur(18px) saturate(158%);
+    }
+
+    .icon-button {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 999px;
+      color: rgba(16, 23, 20, 0.72);
+      background: transparent;
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .icon-button:hover,
+    .icon-button.active {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: 0 8px 18px rgba(26, 40, 34, 0.1), 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+    }
+
+    .command-glass {
+      position: relative;
+      display: grid;
+      gap: 10px;
+      padding: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      border-radius: 24px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.42)),
+        linear-gradient(100deg, rgba(0, 108, 255, 0.08), transparent 38%, rgba(8, 126, 164, 0.05)),
+        rgba(255, 255, 255, 0.4);
+      box-shadow:
+        0 18px 42px rgba(16, 24, 34, 0.14),
+        0 1px 0 rgba(255, 255, 255, 0.76) inset,
+        0 -1px 0 rgba(0, 108, 255, 0.09) inset;
+      -webkit-backdrop-filter: blur(24px) saturate(166%);
+      backdrop-filter: blur(24px) saturate(166%);
+    }
+
+    .command-glass::before {
+      content: "";
+      position: absolute;
+      inset: 1px;
+      border-radius: 23px;
+      pointer-events: none;
+      background:
+        linear-gradient(118deg, rgba(255, 255, 255, 0.9), transparent 28%),
+        radial-gradient(180px 72px at var(--mx, 76%) var(--my, 8%), rgba(255, 255, 255, 0.58), transparent 68%);
+      opacity: 0.72;
+    }
+
+    .search-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+
+    .search {
+      min-width: 0;
+      height: 46px;
+      display: grid;
+      grid-template-columns: 20px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px 0 14px;
+      border: 1px solid rgba(18, 28, 42, 0.13);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.74);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+    }
+
+    .search:focus-within {
+      border-color: var(--line-strong);
+      box-shadow: 0 0 0 3px rgba(0, 108, 255, 0.14), 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+    }
+
+    .search svg {
+      color: var(--ink-3);
+    }
+
+    .search input {
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .kbd {
+      min-width: 30px;
+      height: 24px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid rgba(18, 28, 42, 0.12);
+      border-radius: 999px;
+      color: var(--ink-3);
+      background: rgba(242, 246, 248, 0.9);
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .primary-pill {
+      min-height: 46px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 999px;
+      color: #fff;
+      background:
+        radial-gradient(120% 160% at 50% -42%, rgba(36, 148, 255, 0.82), transparent 48%),
+        linear-gradient(180deg, #1a2638, #050a12 72%);
+      box-shadow:
+        0 16px 34px rgba(0, 92, 230, 0.24),
+        0 12px 28px rgba(5, 10, 18, 0.2),
+        0 1px 0 rgba(255, 255, 255, 0.28) inset,
+        0 -1px 0 rgba(0, 108, 255, 0.38) inset;
+      font-size: 14px;
+      font-weight: 740;
+      white-space: nowrap;
+      transition: filter 180ms ease, transform 180ms ease;
+    }
+
+    .primary-pill svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .filter-row {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      gap: 6px;
+      overflow: auto hidden;
+      scrollbar-width: none;
+    }
+
+    .filter-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .filter {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 13px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      color: rgba(18, 28, 42, 0.68);
+      background: transparent;
+      font-size: 13px;
+      white-space: nowrap;
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .filter.active {
+      color: #111a24;
+      background: rgba(255, 255, 255, 0.66);
+      border-color: rgba(255, 255, 255, 0.78);
+      box-shadow: 0 8px 18px rgba(16, 24, 34, 0.1), 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+    }
+
+    .filter:not(.active):hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.4);
+    }
+
+    .main-area {
+      position: relative;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: 68px 1fr;
+      gap: 12px;
+      height: calc(100% - 184px);
+      min-height: 0;
+      padding: 0 14px 92px;
+    }
+
+    .rail {
+      min-width: 0;
+      display: grid;
+      align-content: start;
+      gap: 9px;
+      padding-top: 4px;
+    }
+
+    .rail-card,
+    .rail-button {
+      border: 1px solid rgba(255, 255, 255, 0.58);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+      -webkit-backdrop-filter: blur(20px) saturate(158%);
+      backdrop-filter: blur(20px) saturate(158%);
+    }
+
+    .rail-card {
+      min-height: 70px;
+      display: grid;
+      place-items: center;
+      gap: 4px;
+      border-radius: 20px;
+      color: var(--ink-2);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(255, 255, 255, 0.34)),
+        rgba(255, 255, 255, 0.36);
+      font-size: 12px;
+    }
+
+    .rail-card strong {
+      color: var(--ink);
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .rail-button {
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      justify-self: center;
+      border-radius: 17px;
+      color: var(--ink-2);
+      background: rgba(255, 255, 255, 0.38);
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .rail-button.active {
+      color: #fff;
+      background:
+        linear-gradient(180deg, rgba(37, 49, 66, 0.98), rgba(11, 17, 25, 0.98));
+      border-color: rgba(20, 30, 44, 0.22);
+      box-shadow: 0 14px 28px rgba(0, 92, 230, 0.16), 0 1px 0 rgba(255, 255, 255, 0.14) inset;
+    }
+
+    .clip-list {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: auto;
+      padding: 4px 2px 14px 0;
+      scrollbar-color: rgba(60, 72, 86, 0.34) transparent;
+    }
+
+    .day-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 2px 4px;
+      color: var(--ink-2);
+      font-size: 14px;
+    }
+
+    .day-line strong {
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .sort-chip {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px;
+      border: 1px solid rgba(255, 255, 255, 0.62);
+      border-radius: 999px;
+      color: var(--ink-2);
+      background: rgba(255, 255, 255, 0.52);
+    }
+
+    .clip {
+      position: relative;
+      display: flex;
+      align-items: flex-start;
+      flex: 0 0 auto;
+      gap: 11px;
+      overflow: hidden;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-card);
+      color: var(--ink);
+      background: var(--surface);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+      cursor: pointer;
+      transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    }
+
+    .clip::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(118deg, rgba(255, 255, 255, 0.65), transparent 31%);
+      opacity: 0.42;
+    }
+
+    .clip:hover {
+      border-color: rgba(18, 28, 42, 0.24);
+      background: var(--surface-strong);
+      transform: translateY(-1px);
+    }
+
+    .clip.selected {
+      border-color: var(--line-strong);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(253, 255, 252, 0.9)),
+        rgba(255, 255, 255, 0.9);
+      box-shadow:
+        0 20px 36px rgba(0, 92, 230, 0.12),
+        0 0 0 1px rgba(0, 108, 255, 0.12) inset,
+        0 1px 0 rgba(255, 255, 255, 0.92) inset;
+    }
+
+    .clip.selected::after {
+      content: "";
+      position: absolute;
+      inset: auto 18px -1px 18px;
+      height: 3px;
+      border-radius: 999px 999px 0 0;
+      background: linear-gradient(90deg, transparent, rgba(0, 108, 255, 0.62), transparent);
+    }
+
+    .clip-icon {
+      position: relative;
+      z-index: 1;
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 13px;
+      color: var(--jade);
+      background: var(--jade-soft);
+    }
+
+    .clip-icon.blue {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .clip-icon.copper {
+      color: var(--copper);
+      background: var(--copper-soft);
+    }
+
+    .clip-main {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+      display: grid;
+      gap: 7px;
+      flex: 1 1 auto;
+    }
+
+    .meta {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--ink-3);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .meta-left {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .source {
+      min-width: 0;
+      max-width: 158px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--ink-2);
+      font-weight: 720;
+    }
+
+    .dot {
+      width: 3px;
+      height: 3px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--ink-3);
+    }
+
+    .type {
+      flex: 0 0 auto;
+      color: var(--ink-3);
+    }
+
+    .text {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      color: #10141a;
+      font-size: 14px;
+      line-height: 1.58;
+    }
+
+    .code {
+      display: block;
+      max-height: 76px;
+      overflow: hidden;
+      padding: 10px 12px;
+      border-radius: 12px;
+      color: #e6f0f8;
+      background:
+        linear-gradient(180deg, rgba(24, 32, 43, 0.98), rgba(9, 14, 21, 0.99));
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .image-row {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .thumb {
+      position: relative;
+      width: 84px;
+      height: 62px;
+      overflow: hidden;
+      border: 1px solid rgba(28, 50, 43, 0.13);
+      border-radius: 14px;
+      background:
+        linear-gradient(135deg, rgba(0, 108, 255, 0.16), rgba(8, 126, 164, 0.12)),
+        linear-gradient(45deg, rgba(255, 255, 255, 0.44) 25%, transparent 25% 50%, rgba(255, 255, 255, 0.44) 50% 75%, transparent 75%);
+      background-size: auto, 14px 14px;
+    }
+
+    .thumb::after {
+      content: "";
+      position: absolute;
+      inset: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.62);
+      border-radius: 999px;
+    }
+
+    .file-row {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid rgba(18, 28, 42, 0.12);
+      border-radius: 13px;
+      background: rgba(245, 248, 250, 0.88);
+    }
+
+    .file-row svg {
+      flex: 0 0 auto;
+      width: 23px;
+      height: 23px;
+      color: var(--blue);
+    }
+
+    .file-name {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 760;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-sub {
+      margin-top: 2px;
+      color: var(--ink-3);
+      font-size: 12px;
+    }
+
+    .tag-row {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .tags {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      overflow: hidden;
+    }
+
+    .tag {
+      min-height: 22px;
+      max-width: 112px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 8px;
+      border-radius: 999px;
+      color: var(--ink-2);
+      background: rgba(238, 243, 239, 0.92);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tag.green {
+      color: #155fae;
+      background: var(--jade-soft);
+    }
+
+    .tag.blue {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .tag.copper {
+      color: var(--copper);
+      background: var(--copper-soft);
+    }
+
+    .tag.violet {
+      color: var(--violet);
+      background: var(--violet-soft);
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 5px;
+      opacity: 0;
+      transition: opacity 160ms ease;
+    }
+
+    .clip:hover .quick-actions,
+    .clip.selected .quick-actions {
+      opacity: 1;
+    }
+
+    .quick-action {
+      position: relative;
+      width: 31px;
+      height: 31px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.58);
+      border-radius: 999px;
+      color: rgba(16, 23, 20, 0.72);
+      background: rgba(255, 255, 255, 0.48);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72) inset;
+      -webkit-backdrop-filter: blur(14px) saturate(150%);
+      backdrop-filter: blur(14px) saturate(150%);
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .quick-action::after {
+      content: "";
+      position: absolute;
+      inset: -5px;
+      border-radius: inherit;
+    }
+
+    .quick-action.primary {
+      color: #fff;
+      background:
+        radial-gradient(120% 160% at 50% -42%, rgba(36, 148, 255, 0.82), transparent 48%),
+        linear-gradient(180deg, #1a2638, #050a12 72%);
+      border-color: rgba(0, 108, 255, 0.2);
+      box-shadow:
+        0 12px 24px rgba(0, 92, 230, 0.22),
+        0 10px 22px rgba(5, 10, 18, 0.18),
+        0 1px 0 rgba(255, 255, 255, 0.28) inset,
+        0 -1px 0 rgba(0, 108, 255, 0.36) inset;
+    }
+
+    .liquid-dock {
+      position: absolute;
+      z-index: 12;
+      left: 84px;
+      right: 14px;
+      bottom: 14px;
+      min-height: 58px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+      padding: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      border-radius: 24px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.44)),
+        linear-gradient(100deg, rgba(0, 108, 255, 0.09), transparent 48%, rgba(8, 126, 164, 0.05)),
+        rgba(255, 255, 255, 0.44);
+      box-shadow:
+        0 22px 48px rgba(16, 24, 34, 0.16),
+        0 1px 0 rgba(255, 255, 255, 0.78) inset,
+        0 -1px 0 rgba(0, 108, 255, 0.1) inset;
+      -webkit-backdrop-filter: blur(24px) saturate(166%);
+      backdrop-filter: blur(24px) saturate(166%);
+    }
+
+    .liquid-dock::before {
+      content: "";
+      position: absolute;
+      inset: 1px;
+      border-radius: 23px;
+      pointer-events: none;
+      background: linear-gradient(118deg, rgba(255, 255, 255, 0.86), transparent 35%, rgba(255, 255, 255, 0.22));
+    }
+
+    .dock-left,
+    .dock-actions {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .dock-left {
+      color: var(--ink-2);
+      font-size: 13px;
+    }
+
+    .status {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      border-radius: 999px;
+      color: #0f5da9;
+      background: rgba(0, 108, 255, 0.1);
+      font-weight: 680;
+      white-space: nowrap;
+    }
+
+    .dock-button {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 13px;
+      border: 1px solid rgba(255, 255, 255, 0.58);
+      border-radius: 999px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.46);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72) inset;
+      font-size: 13px;
+      font-weight: 680;
+      white-space: nowrap;
+      transition: background 180ms ease, filter 180ms ease, transform 180ms ease;
+    }
+
+    .dock-button.primary {
+      color: #fff;
+      border-color: rgba(0, 108, 255, 0.18);
+      background:
+        radial-gradient(120% 160% at 50% -42%, rgba(36, 148, 255, 0.82), transparent 48%),
+        linear-gradient(180deg, #1a2638, #050a12 72%);
+      box-shadow:
+        0 14px 28px rgba(0, 92, 230, 0.24),
+        0 10px 22px rgba(5, 10, 18, 0.18),
+        0 1px 0 rgba(255, 255, 255, 0.28) inset,
+        0 -1px 0 rgba(0, 108, 255, 0.38) inset;
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 20;
+      width: min(360px, calc(100vw - 48px));
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      border-radius: 18px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-glass);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
+      backdrop-filter: blur(22px) saturate(160%);
+      font-size: 14px;
+    }
+
+    .toast.show {
+      display: flex;
+      animation: rise 180ms ease-out;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .icon-button:active,
+    .primary-pill:active,
+    .filter:active,
+    .rail-button:active,
+    .quick-action:active,
+    .dock-button:active {
+      transform: scale(0.97);
+    }
+
+    .primary-pill:hover,
+    .quick-action.primary:hover,
+    .dock-button.primary:hover {
+      filter: saturate(108%) brightness(1.02);
+    }
+
+    .quick-action:hover,
+    .dock-button:hover {
+      background: rgba(255, 255, 255, 0.64);
+    }
+
+    .icon-button:focus-visible,
+    .primary-pill:focus-visible,
+    .filter:focus-visible,
+    .rail-button:focus-visible,
+    .quick-action:focus-visible,
+    .dock-button:focus-visible,
+    .clip:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 980px) {
+      body {
+        padding: 18px;
+        place-items: start center;
+      }
+
+      .composition {
+        min-height: auto;
+        justify-items: center;
+        gap: 28px;
+      }
+
+      .brief {
+        position: static;
+        order: 2;
+        max-width: 560px;
+        width: min(560px, 100%);
+      }
+
+      .brief h1 {
+        max-width: 12ch;
+      }
+    }
+
+    @media (max-width: 560px) {
+      body {
+        padding: 0;
+        background: #eef2f5;
+      }
+
+      body::before,
+      body::after {
+        display: none;
+      }
+
+      .composition {
+        display: block;
+        width: 100%;
+      }
+
+      .brief,
+      .stage-glow,
+      .memory-card {
+        display: none;
+      }
+
+      .preview-stage {
+        min-height: 100vh;
+      }
+
+      .preview-stage::before,
+      .preview-stage::after {
+        display: none;
+      }
+
+      .window {
+        width: 100vw;
+        height: 100vh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .top-glass {
+        padding: 10px;
+      }
+
+      .brand {
+        max-width: 138px;
+      }
+
+      .command-glass {
+        border-radius: 22px;
+        -webkit-backdrop-filter: blur(16px) saturate(150%);
+        backdrop-filter: blur(16px) saturate(150%);
+      }
+
+      .search-row {
+        grid-template-columns: 1fr 46px;
+      }
+
+      .primary-pill {
+        width: 46px;
+        padding: 0;
+        justify-content: center;
+      }
+
+      .primary-pill span {
+        display: none;
+      }
+
+      .search {
+        grid-template-columns: 18px 1fr 24px;
+        height: 46px;
+      }
+
+      .main-area {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        height: calc(100% - 178px);
+        padding: 0 10px 88px;
+      }
+
+      .rail {
+        display: none;
+      }
+
+      .clip {
+        padding: 12px;
+      }
+
+      .clip-icon {
+        width: 32px;
+        height: 32px;
+        flex-basis: 32px;
+      }
+
+      .source {
+        max-width: 152px;
+      }
+
+      .text {
+        -webkit-line-clamp: 2;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .code {
+        font-size: 12px;
+      }
+
+      .image-row {
+        grid-template-columns: 74px 1fr;
+      }
+
+      .thumb {
+        width: 74px;
+        height: 56px;
+      }
+
+      .liquid-dock {
+        left: 10px;
+        right: 10px;
+        bottom: 8px;
+        min-height: 58px;
+        padding: 7px;
+        grid-template-columns: 1fr auto;
+        -webkit-backdrop-filter: blur(16px) saturate(150%);
+        backdrop-filter: blur(16px) saturate(150%);
+      }
+
+      .dock-left span:not(.status) {
+        display: none;
+      }
+
+      .dock-button {
+        width: 46px;
+        min-height: 46px;
+        padding: 0;
+      }
+
+      .dock-button span {
+        display: none;
+      }
+
+      .filter {
+        min-height: 36px;
+      }
+
+      .quick-actions {
+        opacity: 1;
+      }
+
+      .quick-action {
+        width: 32px;
+        height: 32px;
+      }
+
+      .quick-action::after {
+        inset: -6px;
+      }
+
+      .tag {
+        min-height: 22px;
+        font-size: 11px;
+      }
+    }
+
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      .window,
+      .brand,
+      .window-actions,
+      .command-glass,
+      .rail-card,
+      .rail-button,
+      .memory-card,
+      .quick-action,
+      .liquid-dock,
+      .toast {
+        background: rgba(255, 255, 255, 0.94);
+      }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+      .window,
+      .brand,
+      .window-actions,
+      .command-glass,
+      .rail-card,
+      .rail-button,
+      .memory-card,
+      .quick-action,
+      .liquid-dock,
+      .toast {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        background: rgba(255, 255, 255, 0.96);
+      }
+
+      .window::before,
+      .command-glass::before,
+      .liquid-dock::before {
+        opacity: 0.2;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 1ms !important;
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="composition">
+    <section class="brief" aria-label="设计方向">
+      <span class="eyebrow">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.8 4.8L19 10l-5.2 2.2L12 17l-1.8-4.8L5 10l5.2-2.2Z"/></svg>
+        Liquid Glass v11
+      </span>
+      <h1>Magpie Preview</h1>
+      <p>这版把展示页退掉，让 Magpie 像真实软件发布截图一样站在中央。黑玉绿控制层、冰蓝折光和微铜底光都收进软件本体。</p>
+      <div class="design-notes">
+        <div class="note">
+          <span class="note-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16"/><path d="M7 12h10"/><path d="M9 16h6"/></svg>
+          </span>
+          <span>黑玉绿做记忆点，冰蓝和微铜负责材质深度。</span>
+        </div>
+        <div class="note">
+          <span class="note-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M7 16h10"/></svg>
+          </span>
+          <span>时间轨、搜索和底部 Dock 形成一个完整的操作动线。</span>
+        </div>
+        <div class="note">
+          <span class="note-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 10h8"/><path d="M8 14h5"/></svg>
+          </span>
+          <span>内容区不滥用透明度，保证剪贴板工具的效率。</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="preview-stage" aria-label="Liquid Glass 剪贴板预览">
+      <div class="stage-glow" aria-hidden="true">
+        <div class="memory-card">
+          <span class="memory-token"></span>
+          <span class="memory-lines"><span></span><span></span></span>
+        </div>
+        <div class="memory-card">
+          <span class="memory-token"></span>
+          <span class="memory-lines"><span></span><span></span></span>
+        </div>
+        <div class="memory-card">
+          <span class="memory-token"></span>
+          <span class="memory-lines"><span></span><span></span></span>
+        </div>
+      </div>
+
+      <div class="window">
+        <div class="content-bed" aria-hidden="true"></div>
+
+        <header class="top-glass">
+          <div class="title-row">
+            <div class="brand">
+              <span class="brand-mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M8 7h8"/><path d="M8 12h6"/><path d="M6 3h12a2 2 0 0 1 2 2v15l-4-3H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+              </span>
+              <span>Magpie</span>
+            </div>
+            <div class="window-actions">
+              <button class="icon-button active" title="置顶" aria-label="置顶">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="m7 9-4 4v1h18v-1l-4-4V4l1-2H6l1 2v5"/></svg>
+              </button>
+              <button class="icon-button" title="标签" aria-label="标签">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><path d="M7 7h.01"/></svg>
+              </button>
+              <button class="icon-button" title="设置" aria-label="设置">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 .9V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.9 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.9-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .9-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 6.4 4l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.9V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .9 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 6l-.1.1A1.7 1.7 0 0 0 19.4 9c.1.4.5.7.9 1h.7a2 2 0 1 1 0 4h-.7a1.7 1.7 0 0 0-.9 1Z"/></svg>
+              </button>
+              <button class="icon-button" title="隐藏" aria-label="隐藏">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="command-glass" id="commandGlass">
+            <div class="search-row">
+              <label class="search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+                <input placeholder="搜索内容、来源或 tag:工作" />
+                <span class="kbd">/</span>
+              </label>
+              <button class="primary-pill" id="aiButton">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg>
+                <span>AI</span>
+              </button>
+            </div>
+            <nav class="filter-row" aria-label="类型筛选">
+              <button class="filter active" data-filter="all">全部</button>
+              <button class="filter" data-filter="text">文本</button>
+              <button class="filter" data-filter="image">图片</button>
+              <button class="filter" data-filter="code">代码</button>
+              <button class="filter" data-filter="file">文件</button>
+              <button class="filter" data-filter="rich">富文本</button>
+            </nav>
+          </div>
+        </header>
+
+        <section class="main-area">
+          <aside class="rail" aria-label="快速入口">
+            <div class="rail-card"><strong>16</strong><span>今天</span></div>
+            <button class="rail-button active" title="全部" aria-label="全部">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+            </button>
+            <button class="rail-button" title="收藏" aria-label="收藏">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 17 5 3-1.3-5.7L20 10l-5.8-.5L12 4 9.8 9.5 4 10l4.3 4.3L7 20Z"/></svg>
+            </button>
+            <button class="rail-button" title="敏感" aria-label="敏感">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+            </button>
+          </aside>
+
+          <div class="clip-list">
+            <div class="day-line">
+              <div><strong>今天</strong> · 16 条</div>
+              <span class="sort-chip">按时间</span>
+            </div>
+
+            <article class="clip selected" data-type="text">
+              <div class="clip-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+              </div>
+              <div class="clip-main">
+                <div class="meta"><span class="meta-left"><span class="source">Microsoft Edge</span><span class="dot"></span><span>刚刚</span></span><span class="type">文本</span></div>
+                <div class="text">Liquid Glass 不应该把内容变成半透明，而是让控制层像一块能漂浮、折射和响应的功能玻璃。</div>
+                <div class="tag-row">
+                  <div class="tags"><span class="tag green">设计</span><span class="tag blue">macOS</span></div>
+                  <div class="quick-actions">
+                    <button class="quick-action primary" title="AI 处理" aria-label="AI 处理"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg></button>
+                    <button class="quick-action" title="标签" aria-label="标签"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/></svg></button>
+                    <button class="quick-action" title="复制" aria-label="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="clip" data-type="code">
+              <div class="clip-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
+              </div>
+              <div class="clip-main">
+                <div class="meta"><span class="meta-left"><span class="source">Visual Studio Code</span><span class="dot"></span><span>3 分钟前</span></span><span class="type">代码</span></div>
+                <div class="code">const selected = clips.find(item => item.active);
+glassDock.morphTo(selected.actions);</div>
+                <div class="tag-row">
+                  <div class="tags"><span class="tag violet">prototype</span><span class="tag">motion</span></div>
+                  <div class="quick-actions">
+                    <button class="quick-action primary" title="解释代码" aria-label="解释代码"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg></button>
+                    <button class="quick-action" title="复制" aria-label="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="clip" data-type="image">
+              <div class="clip-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 8h.01"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m21 15-5-5L5 21"/></svg>
+              </div>
+              <div class="clip-main">
+                <div class="meta"><span class="meta-left"><span class="source">Snipping Tool</span><span class="dot"></span><span>12 分钟前</span></span><span class="type">图片</span></div>
+                <div class="image-row">
+                  <div class="thumb"></div>
+                  <div class="text">截图 1280 x 720。外部编辑保存后，预览应即时更新并同步到当前列表。</div>
+                </div>
+                <div class="tag-row">
+                  <div class="tags"><span class="tag green">界面</span><span class="tag">待确认</span></div>
+                  <div class="quick-actions">
+                    <button class="quick-action" title="打开" aria-label="打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="clip" data-type="file">
+              <div class="clip-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+              </div>
+              <div class="clip-main">
+                <div class="meta"><span class="meta-left"><span class="source">Finder</span><span class="dot"></span><span>31 分钟前</span></span><span class="type">文件</span></div>
+                <div class="file-row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8Z"/><path d="M10 4l2 2"/></svg>
+                  <div style="min-width:0">
+                    <div class="file-name">liquid-glass-redesign-notes.pdf</div>
+                    <div class="file-sub">PDF · 2.4 MB · 点击打开位置</div>
+                  </div>
+                </div>
+                <div class="tag-row">
+                  <div class="tags"><span class="tag blue">资料</span></div>
+                  <div class="quick-actions">
+                    <button class="quick-action" title="打开" aria-label="打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="clip" data-type="rich">
+              <div class="clip-icon copper">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+              </div>
+              <div class="clip-main">
+                <div class="meta"><span class="meta-left"><span class="source">Excel</span><span class="dot"></span><span>昨天</span></span><span class="type">富文本</span></div>
+                <div class="text">季度预算表：保留格式，但列表预览以正文摘要为主，避免大块表格破坏扫描节奏。</div>
+                <div class="tag-row">
+                  <div class="tags"><span class="tag copper">敏感</span><span class="tag">财务</span></div>
+                  <div class="quick-actions">
+                    <button class="quick-action primary" title="总结" aria-label="总结"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <div class="liquid-dock">
+          <div class="dock-left">
+            <span class="status">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>
+              已同步
+            </span>
+            <span>Ctrl+1 粘贴第一项</span>
+          </div>
+          <div class="dock-actions">
+            <button class="dock-button primary" id="dockAi">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg>
+              <span>总结</span>
+            </button>
+            <button class="dock-button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/></svg>
+              <span>标签</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast">
+    <span>AI Dock 会根据当前剪贴板内容切换动作，保持内容区安静。</span>
+  </div>
+
+  <script>
+    const clips = [...document.querySelectorAll(".clip")];
+    const filters = [...document.querySelectorAll(".filter")];
+    const toast = document.getElementById("toast");
+    const commandGlass = document.getElementById("commandGlass");
+
+    commandGlass.addEventListener("pointermove", (event) => {
+      const rect = commandGlass.getBoundingClientRect();
+      commandGlass.style.setProperty("--mx", `${event.clientX - rect.left}px`);
+      commandGlass.style.setProperty("--my", `${event.clientY - rect.top}px`);
+    });
+
+    clips.forEach((clip) => {
+      clip.addEventListener("click", () => {
+        clips.forEach((item) => item.classList.remove("selected"));
+        clip.classList.add("selected");
+      });
+    });
+
+    filters.forEach((filter) => {
+      filter.addEventListener("click", () => {
+        const type = filter.dataset.filter;
+        filters.forEach((item) => item.classList.remove("active"));
+        filter.classList.add("active");
+        clips.forEach((clip) => {
+          clip.hidden = type !== "all" && clip.dataset.type !== type;
+        });
+      });
+    });
+
+    function showToast() {
+      toast.classList.add("show");
+      clearTimeout(window.__liquidToast);
+      window.__liquidToast = setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    document.querySelectorAll(".primary-pill, .quick-action.primary, #dockAi").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showToast();
+      });
+    });
+  </script>
+</body>
+</html>

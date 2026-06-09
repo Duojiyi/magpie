@@ -73,6 +73,7 @@ export interface VirtualClipboardListProps {
   /** 卡片密度三档（V5 / 需求 32），切换时强制重算虚拟列表行高 */
   cardDensity: CardDensity;
   header?: ReactNode;
+  footer?: ReactNode;
 }
 
 export interface VirtualClipboardListHandle {

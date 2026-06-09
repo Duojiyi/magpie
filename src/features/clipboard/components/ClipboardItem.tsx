@@ -1939,7 +1939,7 @@ const ClipboardItem = ({
             <AnimatePresence>
                 {showAIOptions && (
                     <motion.div
-                        className={compactMode ? "ai-options-dropdown" : ""}
+                        className={compactMode ? "ai-options-dropdown" : "ai-options-panel"}
                         initial={compactMode ? { opacity: 0, y: -10 } : "collapsed"}
                         animate={compactMode ? { opacity: 1, y: 0 } : "open"}
                         exit={compactMode ? { opacity: 0, y: -10 } : "collapsed"}
@@ -1959,22 +1959,9 @@ const ClipboardItem = ({
                             minWidth: '140px',
                             maxHeight: '200px',
                             overflowY: 'auto'
-                        } : { overflow: 'hidden' }}
+                        } : undefined}
                     >
-                        <div style={compactMode ? {
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '4px'
-                        } : {
-                            padding: '8px 10px',
-                            background: 'rgba(72, 123, 219, 0.05)',
-                            border: '1.5px dashed var(--accent-color)',
-                            borderRadius: '4px',
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            gap: '6px',
-                            alignItems: 'center'
-                        }}>
+                        <div className={compactMode ? "ai-options-stack" : "ai-options-grid"}>
                             {['task', 'mouthpiece', 'translate'].map(actionType => (
                                 <button
                                     key={actionType}
@@ -1983,25 +1970,7 @@ const ClipboardItem = ({
                                         onAIAction?.(actionType);
                                         onAIOptionsToggle?.();
                                     }}
-                                    className="btn-icon"
-                                    style={compactMode ? {
-                                        width: '100%',
-                                        fontSize: '11px',
-                                        height: '32px',
-                                        boxShadow: '2px 2px 0 0 var(--shadow-color)',
-                                        textTransform: 'none',
-                                        justifyContent: 'flex-start',
-                                        paddingLeft: '10px'
-                                    } : {
-                                        flex: 1,
-                                        minWidth: '90px',
-                                        fontSize: '11px',
-                                        height: '32px',
-                                        padding: '0 12px',
-                                        boxShadow: '2px 2px 0 0 var(--shadow-color)',
-                                        textTransform: 'none',
-                                        whiteSpace: 'nowrap'
-                                    }}
+                                    className="btn-icon ai-option-action"
                                 >
                                     {t(`ai_${actionType}`)}
                                 </button>

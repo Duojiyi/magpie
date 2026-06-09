@@ -1136,9 +1136,16 @@ const App = () => {
           cardDensity={cardDensity}
           selectedIndex={selectedIndex}
           isKeyboardMode={isKeyboardMode}
+          aiEnabled={aiEnabled}
+          processingAiId={processingAiId}
           virtualListRef={virtualListRef}
           handlePinnedReorder={handlePinnedReorder}
           renderItemContent={renderItemContent}
+          copyToClipboard={copyToClipboard}
+          openContent={openContent}
+          setEditingTagsId={setEditingTagsId}
+          setTagInput={setTagInput}
+          handleAIAction={handleAIAction}
           loadMoreHistory={loadMoreHistory}
           handleListScroll={handleListScroll}
           hasMore={effectiveHasMore}

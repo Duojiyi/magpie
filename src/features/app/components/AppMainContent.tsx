@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentProps, RefObject, ReactNode } from "react";
+import type { ComponentProps, Dispatch, RefObject, ReactNode, SetStateAction } from "react";
 import { motion, Reorder, useDragControls } from "framer-motion";
 import type { DragControls } from "framer-motion";
-import { ArrowUp, Clipboard, SearchX, Tags } from "lucide-react";
+import { ArrowUp, Clipboard, Copy, ExternalLink, FileText, SearchX, Sparkles, Tag, Tags } from "lucide-react";
 import FileTransferChatView from "../../file-transfer/components/FileTransferChatView";
 import SettingsPanel from "../../settings/components/SettingsPanel";
 import TagManager from "../../tag/components/TagManager";
 import EmojiPanel from "../../emoji/components/EmojiPanel";
 import { VirtualClipboardList } from "../../clipboard/components/VirtualClipboardList";
 import type { ClipboardEntry } from "../../../shared/types";
+import { isGlassTheme } from "../../../shared/config/themes";
 import type { CardDensity } from "../types";
 import type { VirtualClipboardListHandle } from "../../clipboard/types";
 
@@ -19,6 +20,15 @@ type RenderItem = (
   dragControls?: DragControls,
   disableLayout?: boolean
 ) => ReactNode;
+
+type CopyToClipboard = (
+  id: number,
+  content: string,
+  contentType: string,
+  pasteWithFormat?: boolean,
+  isPinned?: boolean,
+  tags?: string[]
+) => Promise<void>;
 
 interface AppMainContentProps {
   t: (key: string) => string;
@@ -44,9 +54,16 @@ interface AppMainContentProps {
   cardDensity: CardDensity;
   selectedIndex: number;
   isKeyboardMode: boolean;
+  aiEnabled: boolean;
+  processingAiId: number | null;
   virtualListRef: RefObject<VirtualClipboardListHandle | null>;
   handlePinnedReorder: (newOrderIds: number[]) => void;
   renderItemContent: RenderItem;
+  copyToClipboard: CopyToClipboard;
+  openContent: (item: ClipboardEntry) => void;
+  setEditingTagsId: Dispatch<SetStateAction<number | null>>;
+  setTagInput: Dispatch<SetStateAction<string>>;
+  handleAIAction: (id: number, content: string, actionType: string) => void;
   loadMoreHistory: () => void;
   handleListScroll: (offset: number) => void;
   hasMore: boolean;
@@ -54,6 +71,112 @@ interface AppMainContentProps {
   showScrollTop: boolean;
   onScrollTop: () => void;
 }
+
+const getTypeName = (t: (key: string) => string, type: string) => {
+  switch (type) {
+    case "code":
+      return t("type_code");
+    case "link":
+    case "url":
+      return t("type_url");
+    case "file":
+      return t("type_file");
+    case "image":
+      return t("type_image");
+    case "video":
+      return t("type_video");
+    case "rich_text":
+      return t("type_rich_text");
+    default:
+      return t("type_text") || "Text";
+  }
+};
+
+const SelectionCommandDock = ({
+  t,
+  item,
+  aiEnabled,
+  isAIProcessing,
+  copyToClipboard,
+  openContent,
+  setEditingTagsId,
+  setTagInput,
+  handleAIAction
+}: {
+  t: (key: string) => string;
+  item: ClipboardEntry;
+  aiEnabled: boolean;
+  isAIProcessing: boolean;
+  copyToClipboard: CopyToClipboard;
+  openContent: (item: ClipboardEntry) => void;
+  setEditingTagsId: Dispatch<SetStateAction<number | null>>;
+  setTagInput: Dispatch<SetStateAction<string>>;
+  handleAIAction: (id: number, content: string, actionType: string) => void;
+}) => {
+  const canUseAI = aiEnabled && (item.content_type === "text" || item.content_type === "rich_text");
+  const typeName = getTypeName(t, item.content_type);
+  const sourceName = item.source_app?.trim() || typeName;
+
+  return (
+    <div className="selection-command-dock window-no-drag" role="toolbar" aria-label={typeName}>
+      <div className="selection-dock-meta">
+        <span className="selection-dock-type" aria-hidden="true">
+          <FileText size={16} />
+        </span>
+        <span className="selection-dock-title" title={`${sourceName} · ${typeName}`}>
+          {sourceName} · {typeName}
+        </span>
+      </div>
+      <div className="selection-dock-actions">
+        <button
+          type="button"
+          className="btn-icon selection-dock-button primary"
+          onClick={() => {
+            copyToClipboard(item.id, item.content, item.content_type, false, item.is_pinned, item.tags || [])
+              .catch(console.error);
+          }}
+          title={t("copy")}
+        >
+          <Copy size={14} />
+          <span>{t("copy")}</span>
+        </button>
+        {canUseAI && (
+          <button
+            type="button"
+            className={`btn-icon selection-dock-button ${isAIProcessing ? "active" : ""}`}
+            disabled={isAIProcessing}
+            onClick={() => handleAIAction(item.id, item.content, "task")}
+            title={t("ai_task")}
+          >
+            <Sparkles size={14} />
+            <span>{isAIProcessing ? t("ai_processing") : t("ai_task")}</span>
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn-icon selection-dock-button"
+          onClick={() => {
+            setTagInput("");
+            setEditingTagsId(item.id);
+          }}
+          title={t("tags")}
+        >
+          <Tag size={14} />
+          <span>{t("tags")}</span>
+        </button>
+        <button
+          type="button"
+          className="btn-icon selection-dock-button icon-only"
+          onClick={() => openContent(item)}
+          title={t("open")}
+          aria-label={t("open")}
+        >
+          <ExternalLink size={14} />
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const SortableItem = ({
   item,
@@ -118,9 +241,16 @@ const AppMainContent = ({
   cardDensity,
   selectedIndex,
   isKeyboardMode,
+  aiEnabled,
+  processingAiId,
   virtualListRef,
   handlePinnedReorder,
   renderItemContent,
+  copyToClipboard,
+  openContent,
+  setEditingTagsId,
+  setTagInput,
+  handleAIAction,
   loadMoreHistory,
   handleListScroll,
   hasMore,
@@ -169,6 +299,8 @@ const AppMainContent = ({
     () => orderedPinnedItems.map((item) => item.id),
     [orderedPinnedItems]
   );
+  const selectedItem = filteredHistory[selectedIndex] ?? null;
+  const showSelectionDock = Boolean(selectedItem) && !compactMode && isGlassTheme(theme);
 
   const handlePinnedIdsReorder = useCallback((nextIds: number[]) => {
     setPinnedOrderIds(nextIds);
@@ -299,7 +431,7 @@ const AppMainContent = ({
   return (
     <>
       {filteredHistory.length > 0 && (
-        <div className="history-list-container">
+        <div className={`history-list-container${showSelectionDock ? " has-selection-dock" : ""}`}>
           <VirtualClipboardList
             ref={virtualListRef}
             items={unpinnedItems}
@@ -331,6 +463,11 @@ const AppMainContent = ({
                 </Reorder.Group>
               ) : null
             }
+            footer={
+              showSelectionDock ? (
+                <div className="selection-command-dock-spacer" aria-hidden="true" />
+              ) : null
+            }
             renderItem={(item, index, isFirst?: boolean) => {
               const el = renderItemContent(item, pinnedItems.length + index, undefined, true);
               if (isFirst && pinnedItems.length === 0) {
@@ -358,6 +495,19 @@ const AppMainContent = ({
               <ArrowUp size={16} />
             </button>
           )}
+          {showSelectionDock && selectedItem && (
+            <SelectionCommandDock
+              t={t}
+              item={selectedItem}
+              aiEnabled={aiEnabled}
+              isAIProcessing={processingAiId === selectedItem.id}
+              copyToClipboard={copyToClipboard}
+              openContent={openContent}
+              setEditingTagsId={setEditingTagsId}
+              setTagInput={setTagInput}
+              handleAIAction={handleAIAction}
+            />
+          )}
         </div>
       )}
     </>
@@ -365,4 +515,3 @@ const AppMainContent = ({
 };
 
 export default AppMainContent;
-

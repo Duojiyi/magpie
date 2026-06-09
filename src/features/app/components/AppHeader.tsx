@@ -98,7 +98,7 @@ const AppHeader = ({
   };
 
   return (
-  <header className="window-drag-region">
+  <header className="window-drag-region app-header">
     <div className="header-top">
       {/* 透明原生拖动层：铺满 header 顶行，自身带 data-tauri-drag-region 走原生窗口拖动，
           内容（按钮/标题/搜索）以更高 z-index 浮于其上，点击空白即流畅拖动窗口。 */}
@@ -187,7 +187,7 @@ const AppHeader = ({
             style={{ flexShrink: 0 }}
           >
             <div className="search-container window-no-drag">
-              <div style={{ position: 'relative' }}>
+              <div className="search-field">
                 <Search size={14} className="search-icon" />
                 <input
                   ref={searchInputRef}
@@ -248,15 +248,7 @@ const AppHeader = ({
                 )}
               </div>
               <div
-                className="hide-scrollbar"
-                style={{
-                  display: 'flex',
-                  gap: '6px',
-                  padding: '8px 0 0 0',
-                  overflowX: 'auto',
-                  scrollbarWidth: 'none',
-                  msOverflowStyle: 'none'
-                }}
+                className="hide-scrollbar type-filter-row"
                 onWheel={(e) => {
                   if (e.deltaY !== 0) {
                     e.currentTarget.scrollLeft += e.deltaY;
@@ -266,17 +258,8 @@ const AppHeader = ({
                 {['text', 'image', 'file', 'url', 'code', 'video', 'rich_text'].map(t => (
                   <button
                     key={t}
-                    className={`btn-icon ${typeFilter === t ? 'active' : ''}`}
+                    className={`btn-icon type-filter-pill ${typeFilter === t ? 'active' : ''}`}
                     onClick={() => setTypeFilter(typeFilter === t ? null : t)}
-                    style={{
-                      width: 'auto',
-                      padding: '4px 8px',
-                      fontSize: '11px',
-                      borderRadius: '4px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      opacity: typeFilter === t ? 1 : 0.7
-                    }}
                     title={getTypeName(t)}
                   >
                     {getTypeName(t)}
