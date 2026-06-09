@@ -45,7 +45,9 @@ pub mod windows_api {
         }
 
         pub unsafe fn get_named_clipboard_formats(
-            _exclude_names: &[&str],
+            _max_formats: usize,
+            _max_format_bytes: usize,
+            _max_total_bytes: usize,
         ) -> Vec<NamedClipboardFormat> {
             Vec::new()
         }
