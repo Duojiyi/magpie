@@ -52,9 +52,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          npm run tauri -- build ${{ matrix.args }} 2>&1 | Tee-Object -FilePath tauri-build.log
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          $buildOutput = npm run tauri -- build ${{ matrix.args }} 2>&1 | Tee-Object -FilePath tauri-build.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            $tail = ($buildOutput | Select-Object -Last 120) -join "`n"
+            $escaped = $tail -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Output "::error title=Tauri build failed::$escaped"
+            exit $exitCode
           }
 
       - name: upload tauri build log
