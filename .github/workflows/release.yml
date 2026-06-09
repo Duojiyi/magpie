@@ -15,7 +15,11 @@ jobs:
       matrix:
         include:
           - platform: 'windows-latest'
-            args: ''
+            args: '--bundles nsis,msi'
+            rustTargets: 'x86_64-pc-windows-msvc'
+          - platform: 'macos-latest'
+            args: '--target universal-apple-darwin --bundles app,dmg'
+            rustTargets: 'aarch64-apple-darwin,x86_64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -29,7 +33,7 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.rustTargets }}
 
       - name: install frontend dependencies
         run: npm install
@@ -38,7 +42,9 @@ jobs:
         id: changelog
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $refName = "${{ github.ref_name }}"
+          $packageVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $tag = if ($refName -match '^v\d') { $refName } else { "v$packageVersion" }
           $version = $tag.TrimStart('v')
           $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
           $regex = "(?ms)^## \[$([regex]::Escape($version))\].*?(?=^## \[|\z)"
@@ -52,7 +58,7 @@ jobs:
           Write-Host "----- release notes -----"
           Write-Host $body
 
-      - name: build & publish (nsis + msi)
+      - name: build & publish bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,28 +67,30 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "Magpie v__VERSION__"
-          releaseBody: ${{ github.event.head_commit.message }}
+          releaseBody: "See CHANGELOG.md for details."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+          uploadUpdaterJson: false
 
       - name: update release body with CHANGELOG
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $tag = "v$version"
           $body = Get-Content release_notes.md -Raw
           gh release edit "$tag" --notes "$body" --repo $env:GITHUB_REPOSITORY
 
       - name: build portable bundle
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: npm run build:portable
 
       - name: upload portable bundle
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -93,7 +101,7 @@ jobs:
           gh release upload "v$version" "$($portable.FullName)" --repo $env:GITHUB_REPOSITORY --clobber
 
       - name: generate latest.json for updater
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

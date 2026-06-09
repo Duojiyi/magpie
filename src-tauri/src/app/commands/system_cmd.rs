@@ -18,7 +18,13 @@ pub fn get_data_path(state: State<'_, AppDataDir>) -> AppResult<String> {
 #[tauri::command]
 pub fn open_folder(path: String) -> AppResult<()> {
     use std::process::Command;
+    #[cfg(target_os = "windows")]
     Command::new("explorer")
+        .arg(path)
+        .spawn()
+        .map_err(|e| AppError::Internal(format!("Failed to open folder: {}", e)))?;
+    #[cfg(target_os = "macos")]
+    Command::new("open")
         .arg(path)
         .spawn()
         .map_err(|e| AppError::Internal(format!("Failed to open folder: {}", e)))?;
@@ -31,7 +37,13 @@ pub fn open_data_folder(state: State<'_, AppDataDir>) -> AppResult<()> {
     let path_str = path.to_string_lossy().to_string();
 
     use std::process::Command;
+    #[cfg(target_os = "windows")]
     Command::new("explorer")
+        .arg(path_str)
+        .spawn()
+        .map_err(|e| AppError::Internal(format!("Failed to open data folder: {}", e)))?;
+    #[cfg(target_os = "macos")]
+    Command::new("open")
         .arg(path_str)
         .spawn()
         .map_err(|e| AppError::Internal(format!("Failed to open data folder: {}", e)))?;
@@ -41,7 +53,13 @@ pub fn open_data_folder(state: State<'_, AppDataDir>) -> AppResult<()> {
 #[tauri::command]
 pub fn open_file_with_default_app(file_path: String) -> AppResult<()> {
     use std::process::Command;
+    #[cfg(target_os = "windows")]
     Command::new("explorer")
+        .arg(&file_path)
+        .spawn()
+        .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
+    #[cfg(target_os = "macos")]
+    Command::new("open")
         .arg(&file_path)
         .spawn()
         .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
@@ -51,8 +69,15 @@ pub fn open_file_with_default_app(file_path: String) -> AppResult<()> {
 #[tauri::command]
 pub fn open_file_location(file_path: String) -> AppResult<()> {
     use std::process::Command;
+    #[cfg(target_os = "windows")]
     Command::new("explorer")
         .arg("/select,")
+        .arg(&file_path)
+        .spawn()
+        .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
+    #[cfg(target_os = "macos")]
+    Command::new("open")
+        .arg("-R")
         .arg(&file_path)
         .spawn()
         .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
@@ -98,6 +123,7 @@ pub fn toggle_autostart(app: AppHandle, enabled: bool) -> AppResult<()> {
 ///
 /// enable 时统一删除这三项，再由 `tauri_plugin_autostart` 以标准 productName(`Magpie`) 格式
 /// 重新写入，使注册表最终仅保留插件格式的 `Magpie` 项。删除为尽力而为：值不存在属正常情况，忽略错误。
+#[cfg(target_os = "windows")]
 fn cleanup_legacy_run_entries() {
     use winreg::enums::*;
     use winreg::RegKey;
@@ -113,6 +139,9 @@ fn cleanup_legacy_run_entries() {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+fn cleanup_legacy_run_entries() {}
+
 #[tauri::command]
 pub fn is_autostart_enabled(app: AppHandle) -> AppResult<bool> {
     // A10（需求 8.6）：以 autolaunch().is_enabled() 为准，使界面状态与插件实际注册状态一致。
@@ -121,6 +150,7 @@ pub fn is_autostart_enabled(app: AppHandle) -> AppResult<bool> {
         .map_err(|e| AppError::Internal(e.to_string()))
 }
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn set_windows_clipboard_history(enabled: bool) -> AppResult<()> {
     use winreg::enums::*;
@@ -193,6 +223,13 @@ pub fn set_windows_clipboard_history(enabled: bool) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn set_windows_clipboard_history(_enabled: bool) -> AppResult<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn get_windows_clipboard_history() -> AppResult<bool> {
     use winreg::enums::*;
@@ -218,6 +255,12 @@ pub fn get_windows_clipboard_history() -> AppResult<bool> {
         Err(_) => true,
     };
     Ok(history_enabled && !v_disabled)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn get_windows_clipboard_history() -> AppResult<bool> {
+    Ok(false)
 }
 
 #[tauri::command]
@@ -258,6 +301,7 @@ pub fn apply_win_v_toggle(current: &str, enable: bool) -> Option<String> {
     }
 }
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn trigger_registry_win_v_optimization(enable: bool) -> AppResult<bool> {
     use winreg::enums::*;
@@ -344,11 +388,18 @@ pub fn trigger_registry_win_v_optimization(enable: bool) -> AppResult<bool> {
     Ok(changed)
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn trigger_registry_win_v_optimization(_enable: bool) -> AppResult<bool> {
+    Ok(false)
+}
+
 #[tauri::command]
 pub fn is_registry_win_v_optimized() -> AppResult<bool> {
     Ok(get_registry_win_v_optimized_status())
 }
 
+#[cfg(target_os = "windows")]
 pub fn get_registry_win_v_optimized_status() -> bool {
     use winreg::enums::*;
     use winreg::RegKey;
@@ -360,6 +411,11 @@ pub fn get_registry_win_v_optimized_status() -> bool {
         // 复用纯函数反推接管状态：启用接管对当前值为无操作（已含 V）即视为已接管
         return apply_win_v_toggle(&current, true).as_deref() == Some(current.as_str());
     }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_registry_win_v_optimized_status() -> bool {
     false
 }
 
@@ -385,6 +441,7 @@ fn match_win_v_occupier(image_name_lower: &str) -> Option<&'static str> {
 /// 通过枚举系统进程的镜像名进行匹配，命中时返回占用来源的应用名；若同时存在多个，
 /// 以「、」连接（PowerToys 优先于 Ditto）。未检测到任何已知占用应用时返回 `None`。
 /// 供前端在 Win+V 注册失败时向用户指明占用来源并提示释放后重试（需求 24.8）。仅 Windows。
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn detect_win_v_occupier() -> Option<String> {
     use windows::core::PWSTR;
@@ -480,6 +537,13 @@ pub fn detect_win_v_occupier() -> Option<String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn detect_win_v_occupier() -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn restart_explorer() -> AppResult<()> {
     use std::os::windows::process::CommandExt;
@@ -488,6 +552,12 @@ pub fn restart_explorer() -> AppResult<()> {
         .args(["/C", "taskkill /F /IM explorer.exe & start explorer.exe"])
         .creation_flags(0x08000000)
         .spawn();
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn restart_explorer() -> AppResult<()> {
     Ok(())
 }
 
@@ -505,6 +575,7 @@ pub fn relaunch(app: AppHandle) {
     app.exit(0);
 }
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn restart_as_admin(app_handle: AppHandle) -> AppResult<()> {
     use std::env;
@@ -554,6 +625,15 @@ pub fn restart_as_admin(app_handle: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn restart_as_admin(_app_handle: AppHandle) -> AppResult<()> {
+    Err(AppError::Internal(
+        "Restart as administrator is only available on Windows".to_string(),
+    ))
+}
+
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn check_is_admin() -> bool {
     use std::ffi::c_void;
@@ -583,6 +663,12 @@ pub fn check_is_admin() -> bool {
             }
         }
     }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn check_is_admin() -> bool {
     false
 }
 

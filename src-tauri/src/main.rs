@@ -14,6 +14,7 @@ pub mod services;
 
 use crate::app::setup;
 use crate::global_state::*;
+#[cfg(target_os = "windows")]
 use std::sync::atomic::Ordering;
 
 fn main() {
@@ -200,19 +201,22 @@ fn main() {
         }
     }
 
-    // Cleanup Hooks on exit
-    unsafe {
-        let h_hook = HOOK_HANDLE.swap(std::ptr::null_mut(), Ordering::SeqCst);
-        if !h_hook.is_null() {
-            let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(
-                windows::Win32::UI::WindowsAndMessaging::HHOOK(h_hook as _),
-            );
-        }
-        let h_mouse = HOOK_MOUSE_HANDLE.swap(std::ptr::null_mut(), Ordering::SeqCst);
-        if !h_mouse.is_null() {
-            let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(
-                windows::Win32::UI::WindowsAndMessaging::HHOOK(h_mouse as _),
-            );
+    #[cfg(target_os = "windows")]
+    {
+        // Cleanup Hooks on exit
+        unsafe {
+            let h_hook = HOOK_HANDLE.swap(std::ptr::null_mut(), Ordering::SeqCst);
+            if !h_hook.is_null() {
+                let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(
+                    windows::Win32::UI::WindowsAndMessaging::HHOOK(h_hook as _),
+                );
+            }
+            let h_mouse = HOOK_MOUSE_HANDLE.swap(std::ptr::null_mut(), Ordering::SeqCst);
+            if !h_mouse.is_null() {
+                let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(
+                    windows::Win32::UI::WindowsAndMessaging::HHOOK(h_mouse as _),
+                );
+            }
         }
     }
 }

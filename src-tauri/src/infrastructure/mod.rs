@@ -9,32 +9,81 @@ pub mod windows_api;
 #[cfg(not(target_os = "windows"))]
 pub mod windows_api {
     pub mod win_clipboard {
+        #[derive(Clone)]
         pub struct ImageData {
             pub width: usize,
             pub height: usize,
             pub bytes: Vec<u8>,
         }
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct NamedClipboardFormat {
+            pub name: String,
+            pub data: Vec<u8>,
+        }
+
         static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
         pub fn get_clipboard_sequence_number() -> u32 {
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         }
+
+        pub unsafe fn clear_clipboard() -> Result<(), String> {
+            Ok(())
+        }
+
         pub unsafe fn get_clipboard_image() -> Option<ImageData> {
             None
         }
+
         pub unsafe fn get_clipboard_files() -> Option<Vec<String>> {
             None
         }
+
         pub unsafe fn get_clipboard_raw_format(_name: &str) -> Option<Vec<u8>> {
             None
         }
+
+        pub unsafe fn get_named_clipboard_formats(
+            _exclude_names: &[&str],
+        ) -> Vec<NamedClipboardFormat> {
+            Vec::new()
+        }
+
         pub unsafe fn set_clipboard_files(_paths: Vec<String>) -> Result<(), String> {
             Ok(())
         }
+
         pub unsafe fn set_clipboard_text_and_html(_text: &str, _: &str) -> Result<(), String> {
             Ok(())
         }
-        pub fn set_clipboard_image_with_formats(_data: ImageData) -> Result<(), String> {
+
+        pub unsafe fn append_clipboard_text_and_html(
+            _text: &str,
+            _cf_html: &str,
+        ) -> Result<(), String> {
             Ok(())
+        }
+
+        pub unsafe fn append_named_clipboard_formats(
+            _formats: &[NamedClipboardFormat],
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        pub unsafe fn set_clipboard_image_and_gif(
+            _data: ImageData,
+            _gif_bytes: Option<&[u8]>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        pub unsafe fn set_clipboard_image_with_formats(
+            _data: ImageData,
+            _gif_data: Option<&[u8]>,
+            _png_data: Option<&[u8]>,
+        ) -> Result<Option<String>, String> {
+            Ok(None)
         }
     }
 
@@ -60,26 +109,42 @@ pub mod windows_api {
     }
 
     pub mod apps {
-        pub fn launch_uwp_with_file(
-            _package: &str,
-            _file: &str,
-        ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::error::AppResult;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, Clone, Debug)]
+        pub struct AppInfo {
+            pub name: String,
+            pub path: String,
+        }
+
+        pub async fn launch_uwp_with_file(_package: &str, _file: &str) -> AppResult<()> {
             Ok(())
         }
-        pub fn get_system_default_app(_ext: &str) -> String {
-            "".into()
+
+        #[tauri::command]
+        pub fn get_system_default_app(_content_type: String) -> AppResult<String> {
+            Ok(String::new())
         }
-        pub fn get_executable_icon(_executable_path: String) -> Result<Option<String>, String> {
+
+        #[tauri::command]
+        pub fn get_executable_icon(_executable_path: String) -> AppResult<Option<String>> {
             Ok(None)
         }
-        pub fn get_file_icon(_file_path: String) -> Result<Option<String>, String> {
+
+        #[tauri::command]
+        pub fn get_file_icon(_file_path: String) -> AppResult<Option<String>> {
             Ok(None)
         }
-        pub fn scan_installed_apps() -> Vec<serde_json::Value> {
-            vec![]
+
+        #[tauri::command]
+        pub async fn scan_installed_apps() -> AppResult<Vec<AppInfo>> {
+            Ok(Vec::new())
         }
-        pub fn get_associated_apps(_ext: &str) -> Vec<serde_json::Value> {
-            vec![]
+
+        #[tauri::command]
+        pub async fn get_associated_apps(_extension: String) -> AppResult<Vec<AppInfo>> {
+            Ok(Vec::new())
         }
     }
 

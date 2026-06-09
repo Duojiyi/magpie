@@ -155,6 +155,7 @@
     ],
     "macOS": {
       "frameworks": [],
+      "signingIdentity": "-",
       "minimumSystemVersion": "10.13"
     }
   }

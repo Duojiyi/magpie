@@ -4,6 +4,26 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.6] - 2026-06-09
+
+> 主题：**v11 液态玻璃界面 Beta + Mac Release 构建通道**。
+
+### 新增
+
+- **v11 液态玻璃界面 Beta**：引入全新的视觉层级、搜索区、内容卡片和底部状态栏设计，让剪贴板主界面更接近桌面软件质感。
+- **Release Actions 增加 macOS universal 构建**：发布 workflow 现在会在打 tag 时同时构建 Windows `nsis/msi` 和 macOS `app/dmg`，Mac 包覆盖 Apple Silicon 与 Intel。
+
+### 改进
+
+- **macOS 构建兜底**：补齐非 Windows 平台的 Windows API stub，并将 Windows-only hook 清理、注册表、管理员重启、Win+V 接管等逻辑限制在 Windows 编译。
+- **macOS 文件打开体验**：文件/文件夹打开命令在 macOS 下改用系统 `open`，文件定位使用 `open -R`。
+- **macOS ad-hoc 签名兜底**：在没有 Apple Developer 证书的 GitHub Release 构建中使用 ad-hoc signing identity，降低下载包被 macOS 判定为损坏的概率。
+
+### 兼容性
+
+- Windows updater 的 `latest.json` 仍保持 Windows-only，避免多平台 release job 覆盖同一个 updater manifest；macOS updater manifest 待后续补齐签名与平台条目。
+- macOS 包已进入 CI 构建通道，但剪贴板监听、系统热键与窗口焦点等平台行为仍需要真机 QA 后再标为稳定。
+
 ## [0.4.5] - 2026-05-31
 
 > 主题：**玻璃主题拖动卡顿真正解决 + 跨平台兜底 + 体验细节修正**。
@@ -297,6 +317,7 @@
 - README 调整：更新仓库链接指向本 fork，移除上游的赞助和社区入口，新增 fork 与协议合规说明。
 - 补充 `vitest` 开发依赖以让 `tsc` 顺利通过对仓库内 `*.test.ts` 文件的类型检查。
 
+[0.4.6]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.6
 [0.4.5]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.5
 [0.4.4]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.4
 [0.4.3]: https://github.com/Duojiyi/magpie/releases/tag/v0.4.3
