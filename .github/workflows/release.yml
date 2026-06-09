@@ -47,12 +47,23 @@ jobs:
         run: npm install
 
       - name: build bundles
-        uses: tauri-apps/tauri-action@v0
+        shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm run tauri -- build ${{ matrix.args }} 2>&1 | Tee-Object -FilePath tauri-build.log
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: upload tauri build log
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          args: ${{ matrix.args }}
+          name: tauri-build-log-${{ matrix.artifactName }}
+          path: tauri-build.log
+          if-no-files-found: ignore
 
       - name: upload bundle artifacts
         uses: actions/upload-artifact@v4
