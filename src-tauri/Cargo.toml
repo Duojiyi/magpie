@@ -41,7 +41,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 tokio = { version = "1", features = ["time"] }
 tauri-plugin-dialog = "2.7"
 tauri-plugin-global-shortcut = "2.3.1"
-window-vibrancy = "0.7.1"
+# 与 tauri 内部依赖保持同版本（0.6），避免 macOS fat LTO 下
+# 两个版本重复导出 ObjC 类符号导致 "failed to load bitcode" 编译失败
+window-vibrancy = "0.6"
 rumqttc = { version = "0.25.1", default-features = false, features = ["websocket", "use-rustls-no-provider", "url"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "0.26"
