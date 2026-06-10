@@ -21,6 +21,21 @@ interface TagInfo {
 
 export default function TagManager({ t, theme }: TagManagerProps) {
     const TAG_MANAGER_VIEW_MODE_KEY = "tiez_tag_manager_view_mode";
+    const TAG_MANAGER_SIDEBAR_WIDTH_KEY = "tiez_tag_manager_sidebar_width";
+    const TAG_MANAGER_SIDEBAR_HEIGHT_KEY = "tiez_tag_manager_sidebar_height";
+    const TAG_MANAGER_SIDEBAR_COLLAPSED_KEY = "tiez_tag_manager_sidebar_collapsed";
+    const readStoredSize = (key: string, fallback: number, min: number, max: number) => {
+        try {
+            const value = Number(window.localStorage.getItem(key));
+            if (Number.isFinite(value)) {
+                return Math.min(Math.max(value, min), max);
+            }
+        } catch {
+            // Ignore storage failures and keep defaults.
+        }
+        return fallback;
+    };
+
     const [tags, setTags] = useState<TagInfo[]>([]);
     const [tagSearch, setTagSearch] = useState('');
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -40,13 +55,23 @@ export default function TagManager({ t, theme }: TagManagerProps) {
     const [isDeleting, setIsDeleting] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ show: boolean, tagName: string | null }>({ show: false, tagName: null });
     const [itemDeleteConfirmation, setItemDeleteConfirmation] = useState<{ show: boolean, id: number | null }>({ show: false, id: null });
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(() => {
+        try {
+            return window.localStorage.getItem(TAG_MANAGER_SIDEBAR_COLLAPSED_KEY) === "true";
+        } catch {
+            return false;
+        }
+    });
     const [sortBy, setSortBy] = useState<'time' | 'count'>('time');
     const [isCreatingItem, setIsCreatingItem] = useState(false);
     const [editingItem, setEditingItem] = useState<{ id: number, content: string } | null>(null);
     const [newItemContent, setNewItemContent] = useState('');
-    const [sidebarWidth, setSidebarWidth] = useState(130);
-    const [sidebarHeight, setSidebarHeight] = useState(180);
+    const [sidebarWidth, setSidebarWidth] = useState(() =>
+        readStoredSize(TAG_MANAGER_SIDEBAR_WIDTH_KEY, 130, 110, 320)
+    );
+    const [sidebarHeight, setSidebarHeight] = useState(() =>
+        readStoredSize(TAG_MANAGER_SIDEBAR_HEIGHT_KEY, 180, 120, 420)
+    );
     const [isResizing, setIsResizing] = useState(false);
     const [isStacked, setIsStacked] = useState(false);
     const [isManageMode, setIsManageMode] = useState(false);
@@ -63,6 +88,31 @@ export default function TagManager({ t, theme }: TagManagerProps) {
             // Ignore storage write failures and keep UI functional.
         }
     }, [viewMode]);
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(TAG_MANAGER_SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
+        } catch {
+            // Ignore storage write failures and keep UI functional.
+        }
+    }, [isCollapsed]);
+
+    useEffect(() => {
+        if (isCollapsed || sidebarWidth < 110) return;
+        try {
+            window.localStorage.setItem(TAG_MANAGER_SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+        } catch {
+            // Ignore storage write failures and keep UI functional.
+        }
+    }, [isCollapsed, sidebarWidth]);
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(TAG_MANAGER_SIDEBAR_HEIGHT_KEY, String(sidebarHeight));
+        } catch {
+            // Ignore storage write failures and keep UI functional.
+        }
+    }, [sidebarHeight]);
 
     useEffect(() => {
         let unlisteners: (() => void)[] = [];

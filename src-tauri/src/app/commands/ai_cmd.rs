@@ -55,6 +55,47 @@ fn apply_optional_http_referer(request: reqwest::RequestBuilder) -> reqwest::Req
     request
 }
 
+fn is_loopback_base_url(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+
+    let host = host.trim_matches(&['[', ']'][..]);
+
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+fn build_ai_http_client(base_url: &str) -> AppResult<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120));
+    if is_loopback_base_url(base_url) {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|e| AppError::Internal(format!("Client creation failed: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_base_url;
+
+    #[test]
+    fn loopback_base_urls_bypass_proxy() {
+        assert!(is_loopback_base_url("http://localhost:11434/v1"));
+        assert!(is_loopback_base_url("http://127.0.0.1:8080"));
+        assert!(is_loopback_base_url("http://[::1]:8080"));
+        assert!(!is_loopback_base_url("https://api.example.com/v1"));
+        assert!(!is_loopback_base_url("not a url"));
+    }
+}
+
 fn sanitize_input(content: &str) -> AppResult<String> {
     // Note: We used to have an injection check here, but it's too aggressive for a general purpose clipboard
     // where users might be copying technical text about AI. The limit is increased to 10000 characters.
@@ -129,11 +170,8 @@ pub async fn check_ai_connectivity(
     api_key: String,
     model: String,
 ) -> AppResult<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("Client creation failed: {}", e))?;
     let cleaned_base = clean_url(&base_url);
+    let client = build_ai_http_client(&cleaned_base)?;
     let api_url = format!("{}/chat/completions", cleaned_base);
 
     // Perform a real minimal handshake
@@ -319,10 +357,7 @@ pub async fn call_ai(
     let system_prompt = build_system_prompt(&action_type);
     let user_prompt = build_user_prompt(&action_type, &content, &effective_target_lang);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("Client creation failed: {}", e))?;
+    let client = build_ai_http_client(&base_url)?;
     let api_url = format!("{}/chat/completions", base_url);
 
     // Ensure max_tokens is greater than thinking_budget when thinking is enabled

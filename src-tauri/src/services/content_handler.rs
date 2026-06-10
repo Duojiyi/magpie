@@ -93,8 +93,10 @@ pub async fn open_content(
     )
     .await?;
 
-    // Start background watcher ONLY if we created a temp file
-    if !use_direct_path && content_type != "rich_text" {
+    // Watch temporary files, and also image entries opened from their managed attachment path.
+    // Direct file/video entries should remain path records, so only image direct paths are imported
+    // back into the clipboard item after an external editor saves.
+    if content_type != "rich_text" && (!use_direct_path || (content_type == "image" && id != 0)) {
         start_file_watcher(app_handle, file_path_clone, content_type, id);
     }
 
