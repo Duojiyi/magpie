@@ -33,18 +33,14 @@
 
 <div align="center">
 
-## 主题展示
+## 界面预览
 
-  <sub>新版 Magpie v0.4.x 视觉系统设计预览（低饱和静谧配色 + 液态玻璃变体）。以下为设计稿，待新版界面落地后将替换为真实截图。</sub>
+  <sub>全新 <b>v11</b> 前端（已在 v0.4.6 落地）：以工具为先的静谧剪贴板界面，默认扁平主题，并提供液态玻璃变体。</sub>
 
   <table>
     <tr>
-      <td align="center"><b>墨玉 Ink Jade</b><br><sub>扁平 · 默认</sub><br><img src="docs/images/theme-ink-jade.png" width="220" /></td>
-      <td align="center"><b>宣纸 Paper</b><br><sub>暖编辑</sub><br><img src="docs/images/theme-paper.png" width="220" /></td>
-    </tr>
-    <tr>
-      <td align="center"><b>晨雾 Mist</b><br><sub>液态玻璃 · 浅</sub><br><img src="docs/images/theme-mist.png" width="220" /></td>
-      <td align="center"><b>暮山 Dusk</b><br><sub>液态玻璃 · 深</sub><br><img src="docs/images/theme-dusk.png" width="220" /></td>
+      <td align="center"><b>扁平 Flat</b><br><sub>默认 · 低饱和</sub><br><img src="docs/images/preview-flat.png" width="300" /></td>
+      <td align="center"><b>液态玻璃 Liquid Glass</b><br><sub>v11 · 半透明控制层</sub><br><img src="docs/images/preview-glass.png" width="300" /></td>
     </tr>
   </table>
 

@@ -33,18 +33,14 @@ This repository is based on [`jimuzhe/tiez-clipboard`](https://github.com/jimuzh
 
 <div align="center">
 
-## Theme Gallery
+## Interface
 
-  <sub>Design preview of the new Magpie v0.4.x visual system (calm low-saturation palette + liquid-glass variants). These are design mockups; live screenshots will follow once the refreshed UI ships.</sub>
+  <sub>The refreshed <b>v11</b> frontend (shipped in v0.4.6): a calm, tool-first clipboard surface with a flat default theme and an optional liquid-glass variant.</sub>
 
   <table>
     <tr>
-      <td align="center"><b>Ink Jade</b><br><sub>flat · default</sub><br><img src="docs/images/theme-ink-jade.png" width="220" /></td>
-      <td align="center"><b>Paper</b><br><sub>warm editorial</sub><br><img src="docs/images/theme-paper.png" width="220" /></td>
-    </tr>
-    <tr>
-      <td align="center"><b>Mist</b><br><sub>liquid glass · light</sub><br><img src="docs/images/theme-mist.png" width="220" /></td>
-      <td align="center"><b>Dusk</b><br><sub>liquid glass · dark</sub><br><img src="docs/images/theme-dusk.png" width="220" /></td>
+      <td align="center"><b>Flat</b><br><sub>default · low-saturation</sub><br><img src="docs/images/preview-flat.png" width="300" /></td>
+      <td align="center"><b>Liquid Glass</b><br><sub>v11 · translucent control layer</sub><br><img src="docs/images/preview-glass.png" width="300" /></td>
     </tr>
   </table>
 

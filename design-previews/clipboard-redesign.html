@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Magpie Clipboard Redesign Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --window: #f5f7f4;
+      --panel: #ffffff;
+      --panel-soft: #f0f3ef;
+      --panel-pressed: #e7eee8;
+      --ink: #1d2622;
+      --ink-2: #50605a;
+      --ink-3: #7c8a84;
+      --line: #d8e0d9;
+      --line-strong: #bccbbf;
+      --accent: #287c67;
+      --accent-2: #466b9a;
+      --accent-soft: #deede8;
+      --warn: #aa6332;
+      --danger: #b64d47;
+      --blue-soft: #e5edf7;
+      --violet-soft: #eee9f7;
+      --radius: 8px;
+      --radius-sm: 6px;
+      --shadow: 0 8px 22px rgba(32, 48, 40, 0.1);
+      --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      --sans: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      background:
+        linear-gradient(180deg, #e9ede8 0%, #dfe7e1 100%);
+      font-family: var(--sans);
+      color: var(--ink);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .stage {
+      width: min(1120px, 100%);
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .notes {
+      color: var(--ink-2);
+      padding: 10px 0;
+    }
+
+    .notes h1 {
+      margin: 0 0 14px;
+      font-size: 28px;
+      line-height: 1.15;
+      letter-spacing: 0;
+      color: var(--ink);
+    }
+
+    .notes p {
+      margin: 0 0 14px;
+      font-size: 14px;
+      line-height: 1.65;
+      max-width: 48ch;
+    }
+
+    .principles {
+      display: grid;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .principle {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 10px 0;
+      border-top: 1px solid rgba(80, 96, 90, 0.18);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .principle svg {
+      width: 16px;
+      height: 16px;
+      margin-top: 1px;
+      flex: 0 0 auto;
+      color: var(--accent);
+    }
+
+    .shell {
+      width: 430px;
+      min-height: 704px;
+      max-height: 704px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--window);
+      border: 1px solid rgba(42, 55, 49, 0.18);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .titlebar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfa;
+    }
+
+    .brand {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .mark {
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: #26342f;
+      border-radius: 5px;
+    }
+
+    .mark svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    .window-actions,
+    .toolbar,
+    .type-row,
+    .item-actions,
+    .status-row {
+      display: flex;
+      align-items: center;
+    }
+
+    .window-actions {
+      gap: 2px;
+    }
+
+    .icon-button {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--ink-2);
+      cursor: pointer;
+    }
+
+    .icon-button:hover,
+    .icon-button.active {
+      background: var(--panel-pressed);
+      color: var(--ink);
+    }
+
+    .icon-button.primary {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .icon-button svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .command-zone {
+      padding: 10px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .search {
+      height: 36px;
+      display: grid;
+      grid-template-columns: 20px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 0 8px 0 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .search:focus-within {
+      border-color: rgba(40, 124, 103, 0.65);
+      box-shadow: 0 0 0 3px rgba(40, 124, 103, 0.14);
+    }
+
+    .search svg {
+      width: 15px;
+      height: 15px;
+      color: var(--ink-3);
+    }
+
+    .search input {
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      color: var(--ink);
+      background: transparent;
+      font-size: 13px;
+    }
+
+    .kbd {
+      min-width: 24px;
+      height: 20px;
+      padding: 0 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-bottom-color: var(--line-strong);
+      border-radius: 5px;
+      color: var(--ink-3);
+      background: var(--panel-soft);
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .type-row {
+      gap: 6px;
+      margin-top: 9px;
+      overflow: auto hidden;
+      scrollbar-width: none;
+    }
+
+    .type-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .type-chip {
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px;
+      white-space: nowrap;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--ink-2);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .type-chip svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .type-chip.active {
+      background: #21332d;
+      color: #fff;
+    }
+
+    .type-chip:not(.active):hover {
+      background: var(--panel-soft);
+      border-color: var(--line);
+      color: var(--ink);
+    }
+
+    .toolbar {
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--ink-2);
+      font-size: 12px;
+    }
+
+    .toolbar-left,
+    .toolbar-right {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toolbar strong {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .toggle {
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--panel);
+    }
+
+    .toggle button {
+      width: 24px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--ink-3);
+      cursor: pointer;
+    }
+
+    .toggle button.active {
+      background: var(--panel-pressed);
+      color: var(--ink);
+    }
+
+    .toggle svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .list {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 8px;
+      display: grid;
+      align-content: start;
+      gap: 7px;
+      scrollbar-color: rgba(80, 96, 90, 0.42) transparent;
+    }
+
+    .item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      cursor: pointer;
+    }
+
+    .item:hover {
+      border-color: var(--line-strong);
+      background: #fbfcfa;
+    }
+
+    .item.selected {
+      border-color: rgba(40, 124, 103, 0.58);
+      background: #f4faf7;
+      box-shadow: inset 0 0 0 1px rgba(40, 124, 103, 0.14);
+    }
+
+    .item.compact {
+      grid-template-columns: 24px 1fr;
+      padding: 8px 10px;
+    }
+
+    .item.compact .content {
+      -webkit-line-clamp: 2;
+    }
+
+    .item.compact .tags,
+    .item.compact .item-actions {
+      display: none;
+    }
+
+    .source-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--panel-soft);
+      color: var(--accent);
+    }
+
+    .source-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .item-main {
+      min-width: 0;
+      display: grid;
+      gap: 6px;
+    }
+
+    .meta {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--ink-3);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .meta-left {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .app-name {
+      min-width: 0;
+      color: var(--ink-2);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--ink-3);
+      opacity: 0.8;
+      flex: 0 0 auto;
+    }
+
+    .content {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.48;
+    }
+
+    .content.code {
+      padding: 8px 9px;
+      border-radius: var(--radius-sm);
+      background: #202824;
+      color: #d8ebe2;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow: hidden;
+    }
+
+    .media-row {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .image-thumb {
+      width: 74px;
+      height: 54px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(40, 124, 103, 0.22), rgba(70, 107, 154, 0.18)),
+        linear-gradient(45deg, #d6e6df 25%, transparent 25% 50%, #d6e6df 50% 75%, transparent 75%);
+      background-size: auto, 14px 14px;
+    }
+
+    .file-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--panel-soft);
+    }
+
+    .file-box svg {
+      width: 20px;
+      height: 20px;
+      color: var(--accent-2);
+    }
+
+    .file-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      color: var(--ink);
+      font-weight: 620;
+    }
+
+    .file-sub {
+      margin-top: 2px;
+      color: var(--ink-3);
+      font-size: 11px;
+    }
+
+    .item-footer {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .tags {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      overflow: hidden;
+    }
+
+    .tag {
+      height: 20px;
+      max-width: 112px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--ink-2);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tag.green {
+      background: var(--accent-soft);
+      color: #1f5f50;
+    }
+
+    .tag.blue {
+      background: var(--blue-soft);
+      color: #355f91;
+    }
+
+    .tag.violet {
+      background: var(--violet-soft);
+      color: #66548f;
+    }
+
+    .tag.warn {
+      background: #f5e9df;
+      color: var(--warn);
+    }
+
+    .item-actions {
+      flex: 0 0 auto;
+      gap: 2px;
+      opacity: 0;
+    }
+
+    .item:hover .item-actions,
+    .item.selected .item-actions {
+      opacity: 1;
+    }
+
+    .footer {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 12px;
+      border-top: 1px solid var(--line);
+      background: #fbfcfa;
+      color: var(--ink-3);
+      font-size: 11px;
+    }
+
+    .status-row {
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--ink-2);
+      white-space: nowrap;
+    }
+
+    .status-pill svg {
+      width: 12px;
+      height: 12px;
+      color: var(--accent);
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      width: min(340px, calc(100vw - 48px));
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(40, 124, 103, 0.28);
+      border-radius: var(--radius);
+      background: #f8fcfa;
+      color: var(--ink);
+      box-shadow: 0 10px 22px rgba(32, 48, 40, 0.13);
+      font-size: 13px;
+    }
+
+    .toast.show {
+      display: flex;
+      animation: toast-in 180ms ease-out;
+    }
+
+    .toast svg {
+      width: 16px;
+      height: 16px;
+      color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    @keyframes toast-in {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 880px) {
+      body {
+        padding: 16px;
+        place-items: start center;
+      }
+
+      .stage {
+        grid-template-columns: 1fr;
+      }
+
+      .notes {
+        order: 2;
+      }
+
+      .shell {
+        width: min(430px, 100%);
+      }
+    }
+
+    @media (max-width: 460px) {
+      body {
+        padding: 0;
+        background: var(--window);
+      }
+
+      .stage {
+        display: block;
+        width: 100%;
+      }
+
+      .notes {
+        display: none;
+      }
+
+      .shell {
+        width: 100%;
+        min-height: 100vh;
+        max-height: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .search {
+        grid-template-columns: 18px 1fr 24px;
+      }
+
+      .search input {
+        font-size: 12px;
+      }
+
+      .content.code {
+        font-size: 11px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 1ms !important;
+        scroll-behavior: auto !important;
+        transition-duration: 1ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="notes" aria-label="设计说明">
+      <h1>剪贴板主界面重设计预览</h1>
+      <p>方向是“日常工具”，不是展示页：低装饰、清晰列表、稳定控件、状态可扫描。用户应该一眼知道内容来自哪里、是什么类型、能做什么。</p>
+      <p>这个 HTML 是静态设计预览，方便先判断视觉方向。它没有改动现有 React/Tauri 代码。</p>
+      <div class="principles">
+        <div class="principle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          <span>减少“AI 味”：不用大面积渐变、发光、过圆卡片和宣传式文案。</span>
+        </div>
+        <div class="principle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/></svg>
+          <span>列表优先：来源、时间、内容、标签、操作都在固定位置，方便反复扫读。</span>
+        </div>
+        <div class="principle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/></svg>
+          <span>保留密度：不是变成大卡片，而是在现有信息量上提升节奏和秩序。</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="shell" aria-label="Magpie 剪贴板预览">
+      <header class="titlebar">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M8 7h8"/><path d="M8 12h6"/><path d="M8 17h4"/><path d="M6 3h12a2 2 0 0 1 2 2v16l-4-3H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+          </span>
+          <span>Magpie</span>
+        </div>
+        <div class="window-actions">
+          <button class="icon-button active" title="取消置顶" aria-label="取消置顶">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="m7 9-4 4v1h18v-1l-4-4V4l1-2H6l1 2v5"/></svg>
+          </button>
+          <button class="icon-button" title="标签管理" aria-label="标签管理">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 12 22l-9-9V3h10l7.59 7.59a2 2 0 0 1 0 2.82Z"/><path d="M7 7h.01"/></svg>
+          </button>
+          <button class="icon-button" title="设置" aria-label="设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .92V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-.92 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.92-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 .92-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.92V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 .92 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.36.45.7.92 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-.92 1Z"/></svg>
+          </button>
+          <button class="icon-button" title="隐藏" aria-label="隐藏">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="command-zone">
+        <label class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+          <input value="" placeholder="搜索内容、来源或 tag:工作" />
+          <span class="kbd">/</span>
+        </label>
+        <div class="type-row" aria-label="类型筛选">
+          <button class="type-chip active" data-filter="all">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+            全部
+          </button>
+          <button class="type-chip" data-filter="text">文本</button>
+          <button class="type-chip" data-filter="image">图片</button>
+          <button class="type-chip" data-filter="code">代码</button>
+          <button class="type-chip" data-filter="file">文件</button>
+          <button class="type-chip" data-filter="rich">富文本</button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <strong>今天</strong>
+          <span>16 条</span>
+        </div>
+        <div class="toolbar-right">
+          <span>按时间</span>
+          <div class="toggle" aria-label="视图密度">
+            <button class="active" id="comfortable" title="舒适密度">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+            </button>
+            <button id="compact" title="紧凑密度">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="list" id="list">
+        <article class="item selected" data-type="text">
+          <div class="source-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+          </div>
+          <div class="item-main">
+            <div class="meta">
+              <div class="meta-left"><span class="app-name">Microsoft Edge</span><span class="dot"></span><span>刚刚</span></div>
+              <span>文本</span>
+            </div>
+            <div class="content">这个方向更像一个每天打开几十次的工具：少一些展示感，多一点清晰、克制和确定性。</div>
+            <div class="item-footer">
+              <div class="tags"><span class="tag green">产品</span><span class="tag blue">文案</span></div>
+              <div class="item-actions">
+                <button class="icon-button primary ai-action" title="AI 处理" aria-label="AI 处理">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/><path d="m19 15 .7 1.9 1.8.7-1.8.7L19 21l-.7-2.7-1.8-.7 1.8-.7Z"/></svg>
+                </button>
+                <button class="icon-button" title="打标签" aria-label="打标签">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 12 22l-9-9V3h10l7.59 7.59a2 2 0 0 1 0 2.82Z"/><path d="M7 7h.01"/></svg>
+                </button>
+                <button class="icon-button" title="复制" aria-label="复制">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v12"/><path d="M8 20H6a2 2 0 0 1-2-2V6"/><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M8 4h8v4H8z"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="item" data-type="code">
+          <div class="source-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
+          </div>
+          <div class="item-main">
+            <div class="meta">
+              <div class="meta-left"><span class="app-name">Visual Studio Code</span><span class="dot"></span><span>3 分钟前</span></div>
+              <span>代码</span>
+            </div>
+            <div class="content code">const nextTags = mergeTagsUnion(current, [SENSITIVE_TAG]);
+await updateTags(item.id, nextTags);</div>
+            <div class="item-footer">
+              <div class="tags"><span class="tag violet">feature</span><span class="tag">快捷键</span></div>
+              <div class="item-actions">
+                <button class="icon-button primary ai-action" title="AI 解释" aria-label="AI 解释">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg>
+                </button>
+                <button class="icon-button" title="复制" aria-label="复制">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="item" data-type="image">
+          <div class="source-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 8h.01"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m21 15-5-5L5 21"/></svg>
+          </div>
+          <div class="item-main">
+            <div class="meta">
+              <div class="meta-left"><span class="app-name">Snipping Tool</span><span class="dot"></span><span>12 分钟前</span></div>
+              <span>图片</span>
+            </div>
+            <div class="media-row">
+              <div class="image-thumb" aria-hidden="true"></div>
+              <div class="content">截图 1280 x 720，来自产品讨论页面。双击打开编辑，保存后列表预览同步更新。</div>
+            </div>
+            <div class="item-footer">
+              <div class="tags"><span class="tag green">设计</span><span class="tag">待确认</span></div>
+              <div class="item-actions">
+                <button class="icon-button" title="打开" aria-label="打开">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
+                </button>
+                <button class="icon-button" title="复制" aria-label="复制">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="item" data-type="file">
+          <div class="source-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+          </div>
+          <div class="item-main">
+            <div class="meta">
+              <div class="meta-left"><span class="app-name">Explorer</span><span class="dot"></span><span>31 分钟前</span></div>
+              <span>文件</span>
+            </div>
+            <div class="file-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8Z"/><path d="M10 4l2 2"/></svg>
+              <div style="min-width:0">
+                <div class="file-name">Magpie-clipboard-redesign-notes.pdf</div>
+                <div class="file-sub">PDF · 2.4 MB · 点击打开文件位置</div>
+              </div>
+            </div>
+            <div class="item-footer">
+              <div class="tags"><span class="tag blue">资料</span></div>
+              <div class="item-actions">
+                <button class="icon-button" title="打开" aria-label="打开">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="item" data-type="rich">
+          <div class="source-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+          </div>
+          <div class="item-main">
+            <div class="meta">
+              <div class="meta-left"><span class="app-name">Excel</span><span class="dot"></span><span>昨天</span></div>
+              <span>富文本</span>
+            </div>
+            <div class="content">季度预算表：保留单元格格式，同时预览以正文摘要为主，避免列表里出现大块难读表格。</div>
+            <div class="item-footer">
+              <div class="tags"><span class="tag warn">敏感</span><span class="tag">财务</span></div>
+              <div class="item-actions">
+                <button class="icon-button primary ai-action" title="AI 总结" aria-label="AI 总结">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg>
+                </button>
+                <button class="icon-button" title="带格式粘贴" aria-label="带格式粘贴">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <footer class="footer">
+        <div class="status-row">
+          <span class="status-pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>
+            WebDAV 已同步
+          </span>
+          <span>Ctrl+1 粘贴第一项</span>
+        </div>
+        <span>0.4.6</span>
+      </footer>
+    </section>
+  </main>
+
+  <div class="toast" id="toast">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7Z"/></svg>
+    <span>AI 操作区保留，但降级为工具按钮，不抢主视觉。</span>
+  </div>
+
+  <script>
+    const items = [...document.querySelectorAll(".item")];
+    const filters = [...document.querySelectorAll(".type-chip")];
+    const compact = document.getElementById("compact");
+    const comfortable = document.getElementById("comfortable");
+    const toast = document.getElementById("toast");
+
+    items.forEach((item) => {
+      item.addEventListener("click", () => {
+        items.forEach((entry) => entry.classList.remove("selected"));
+        item.classList.add("selected");
+      });
+    });
+
+    filters.forEach((filter) => {
+      filter.addEventListener("click", () => {
+        const type = filter.dataset.filter;
+        filters.forEach((entry) => entry.classList.remove("active"));
+        filter.classList.add("active");
+        items.forEach((item) => {
+          item.hidden = type !== "all" && item.dataset.type !== type;
+        });
+      });
+    });
+
+    compact.addEventListener("click", () => {
+      compact.classList.add("active");
+      comfortable.classList.remove("active");
+      items.forEach((item) => item.classList.add("compact"));
+    });
+
+    comfortable.addEventListener("click", () => {
+      comfortable.classList.add("active");
+      compact.classList.remove("active");
+      items.forEach((item) => item.classList.remove("compact"));
+    });
+
+    document.querySelectorAll(".ai-action").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toast.classList.add("show");
+        clearTimeout(window.__toastTimer);
+        window.__toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
+      });
+    });
+  </script>
+</body>
+</html>

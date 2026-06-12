@@ -1,4 +1,4 @@
-name: "Build Release Bundles"
+name: "Publish Release"
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 jobs:
   publish-tauri:
     permissions:
-      contents: read
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -17,17 +17,9 @@ jobs:
           - platform: 'windows-latest'
             args: '--bundles nsis,msi'
             rustTargets: 'x86_64-pc-windows-msvc'
-            artifactName: 'windows'
-            uploadPaths: |
-              src-tauri/target/release/bundle/nsis/*
-              src-tauri/target/release/bundle/msi/*
           - platform: 'macos-latest'
             args: '--target universal-apple-darwin --bundles app,dmg'
             rustTargets: 'aarch64-apple-darwin,x86_64-apple-darwin'
-            artifactName: 'macos-universal'
-            uploadPaths: |
-              src-tauri/target/universal-apple-darwin/release/bundle/dmg/*
-              src-tauri/target/universal-apple-darwin/release/bundle/macos/*
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -46,54 +38,65 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      - name: build bundles
+      - name: extract release notes from CHANGELOG
+        id: changelog
         shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          if (-not (Test-Path CHANGELOG.md)) {
+            "See CHANGELOG.md for details." | Out-File -FilePath release_notes.md -Encoding utf8 -NoNewline
+            exit 0
+          }
+          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $regex = "(?ms)^## \[$([regex]::Escape($version))\].*?(?=^## \[|\z)"
+          $m = [regex]::Match($changelog, $regex)
+          if (-not $m.Success) {
+            $body = "See CHANGELOG.md for details."
+          } else {
+            $body = $m.Value.Trim()
+          }
+          $body | Out-File -FilePath release_notes.md -Encoding utf8 -NoNewline
+          Write-Host "----- release notes -----"
+          Write-Host $body
+
+      - name: build & publish bundles
+        uses: tauri-apps/tauri-action@v0
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          CARGO_TERM_COLOR: never
-          NO_COLOR: 1
+        with:
+          tagName: v__VERSION__
+          releaseName: "Magpie v__VERSION__"
+          releaseBody: ${{ github.event.head_commit.message }}
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      - name: update release body with CHANGELOG
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $buildOutput = npm run tauri -- build ${{ matrix.args }} 2>&1 | Tee-Object -FilePath tauri-build.log
-          $exitCode = $LASTEXITCODE
-          if ($exitCode -ne 0) {
-            $matches = Select-String -Path tauri-build.log -Pattern 'error|failed|cannot|could not|not found|No such|denied|Exit status|Command' -CaseSensitive:$false |
-              Select-Object -First 60 |
-              ForEach-Object { "$($_.LineNumber): $($_.Line)" }
-            if ($matches) {
-              $snippet = ($matches -join "`n")
-            } else {
-              $snippet = ($buildOutput | Select-Object -Last 80) -join "`n"
-            }
-            $escaped = $snippet -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
-            Write-Output "::error title=Tauri build failed::$escaped"
-            exit $exitCode
-          }
-
-      - name: upload tauri build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-build-log-${{ matrix.artifactName }}
-          path: tauri-build.log
-          if-no-files-found: ignore
-
-      - name: upload bundle artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: magpie-${{ matrix.artifactName }}
-          path: ${{ matrix.uploadPaths }}
-          if-no-files-found: error
+          $tag = "${{ github.ref_name }}"
+          $body = Get-Content release_notes.md -Raw
+          gh release edit "$tag" --notes "$body" --repo $env:GITHUB_REPOSITORY
 
       - name: build portable bundle
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: npm run build:portable
 
-      - name: upload portable artifact
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: magpie-windows-portable
-          path: artifacts/portable/*.zip
-          if-no-files-found: error
+      - name: upload portable bundle
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $portable = Get-ChildItem -Path artifacts/portable -Filter '*.zip' | Select-Object -First 1
+          if (-not $portable) { throw 'portable zip missing' }
+          gh release upload "v$version" "$($portable.FullName)" --repo $env:GITHUB_REPOSITORY --clobber
