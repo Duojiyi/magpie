@@ -146,9 +146,36 @@ fn is_likely_spreadsheet_source(
         haystack.push_str(&path.to_ascii_lowercase());
     }
 
-    ["excel", "et.exe", "wps", "spreadsheet", "calc", "numbers"]
-        .iter()
-        .any(|needle| haystack.contains(needle))
+    // NOTE: a bare "wps" is deliberately NOT matched here. wps.exe is WPS *Writer*, not a
+    // spreadsheet; classifying it as one made every copy from it take the spreadsheet path —
+    // three full clipboard enumerations, and preserving all of WPS's private OLE formats.
+    // WPS Spreadsheets is et.exe and is matched by executable name below.
+    if [
+        "excel",
+        "spreadsheet",
+        "numbers",
+        "wps表格",
+        "wps 表格",
+        "libreoffice calc",
+        "openoffice calc",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle))
+    {
+        return true;
+    }
+
+    // Compare the executable's whole file name: a substring test would let an unrelated
+    // "widget.exe" satisfy "et.exe". Note "calc.exe" is NOT listed — that is the Windows
+    // Calculator, not a spreadsheet; LibreOffice/OpenOffice Calc run as soffice and are
+    // matched by the application-name check above.
+    let exe = source_snapshot
+        .process_path
+        .as_deref()
+        .and_then(|path| path.rsplit(['\\', '/']).next())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(exe.as_str(), "excel.exe" | "et.exe")
 }
 
 fn is_ignored_named_clipboard_format(name: &str) -> bool {
@@ -236,15 +263,18 @@ pub fn capture_preserved_named_formats_from_clipboard(
         .unwrap_or(false);
 
     for attempt in 0..3 {
+        // The predicate runs before the data for each format is requested, so formats we
+        // don't want are never rendered by their owning application. See the note on
+        // get_named_clipboard_formats.
         let formats = unsafe {
             crate::infrastructure::windows_api::win_clipboard::get_named_clipboard_formats(
                 PRESERVED_NAMED_FORMAT_MAX_COUNT * 2,
                 PRESERVED_NAMED_FORMAT_MAX_BYTES,
                 PRESERVED_NAMED_FORMAT_TOTAL_BYTES,
+                &|name: &str| should_preserve_named_clipboard_format(source_snapshot, name),
             )
         }
         .into_iter()
-        .filter(|format| should_preserve_named_clipboard_format(source_snapshot, &format.name))
         .take(PRESERVED_NAMED_FORMAT_MAX_COUNT)
         .collect::<Vec<_>>();
 
@@ -1075,8 +1105,72 @@ pub fn process_new_entry(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_snipping_tool_source, should_capture_file_entries};
+    use super::{
+        is_likely_spreadsheet_source, is_snipping_tool_source, should_capture_file_entries,
+        should_preserve_named_clipboard_format,
+    };
     use crate::infrastructure::windows_api::window_tracker::ActiveAppInfo;
+
+    fn source(app_name: &str, path: &str) -> ActiveAppInfo {
+        ActiveAppInfo {
+            app_name: app_name.to_string(),
+            process_path: Some(path.to_string()),
+        }
+    }
+
+    #[test]
+    fn wps_writer_is_not_treated_as_a_spreadsheet() {
+        // Regression guard for the WPS crash: classifying WPS Writer as a spreadsheet made
+        // every copy from it re-enumerate the clipboard three times and preserve WPS's
+        // private OLE formats, both of which force WPS to render embedded objects.
+        let writer = source("WPS Office", r"C:\Program Files\WPS Office\office6\wps.exe");
+        assert!(!is_likely_spreadsheet_source(&writer));
+        assert!(!should_preserve_named_clipboard_format(
+            Some(&writer),
+            "Embed Source"
+        ));
+        assert!(!should_preserve_named_clipboard_format(
+            Some(&writer),
+            "KSO_MARK"
+        ));
+    }
+
+    #[test]
+    fn real_spreadsheets_are_still_detected() {
+        assert!(is_likely_spreadsheet_source(&source(
+            "WPS Office",
+            r"C:\Program Files\WPS Office\office6\et.exe"
+        )));
+        assert!(is_likely_spreadsheet_source(&source(
+            "Microsoft Excel",
+            r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE"
+        )));
+    }
+
+    #[test]
+    fn executable_match_is_not_a_substring_match() {
+        // "widget.exe" contains "et.exe" — a substring test would misfire here.
+        assert!(!is_likely_spreadsheet_source(&source(
+            "Widget",
+            r"C:\Apps\widget.exe"
+        )));
+    }
+
+    #[test]
+    fn ole_formats_are_never_preserved_even_for_spreadsheets() {
+        let excel = source("Microsoft Excel", r"C:\Office16\EXCEL.EXE");
+        for name in ["Embed Source", "Object Descriptor", "OLE Private Data"] {
+            assert!(
+                !should_preserve_named_clipboard_format(Some(&excel), name),
+                "{} must stay on the ignore list",
+                name
+            );
+        }
+        assert!(should_preserve_named_clipboard_format(
+            Some(&excel),
+            "Rich Text Format"
+        ));
+    }
 
     #[test]
     fn detects_snipping_tool_by_process_name() {

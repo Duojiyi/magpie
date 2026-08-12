@@ -116,8 +116,99 @@ pub fn calc_image_hash(base64_data: &str) -> Option<i64> {
     Some(hasher.finish() as i64)
 }
 
+/// Open the database, recovering automatically if the file is unusable.
+///
+/// `panic = "abort"` in release means a crash runs no destructors, so the WAL can be left in
+/// a state SQLite refuses to open. Previously that was terminal: startup failed before the
+/// tray or any window existed, and the only way out was to uninstall and delete the data
+/// directory. Now an unopenable file is moved aside and a fresh one is created, so the app
+/// always starts and the old file is still there for manual recovery.
 pub fn init_db(path: &str) -> Result<Connection> {
+    match open_and_prepare_db(path) {
+        Ok(conn) => Ok(conn),
+        // Only replace the file when it is genuinely damaged. A failed migration or a full
+        // disk also fails to open, but the data is fine — quarantining then would look to
+        // the user like every clipboard entry had vanished.
+        Err(first_err) if is_corruption_error(&first_err) => {
+            let Some(quarantined) = quarantine_corrupt_db(path) else {
+                return Err(first_err);
+            };
+            match open_and_prepare_db(path) {
+                Ok(conn) => {
+                    crate::error!(
+                        "[DB] database was corrupt ({}); moved aside to {} and started fresh",
+                        first_err,
+                        quarantined
+                    );
+                    Ok(conn)
+                }
+                Err(_) => {
+                    // A fresh file fails too, so the file was never the problem. Put the
+                    // original back so the user isn't left with a renamed database on top
+                    // of an app that still won't start.
+                    restore_quarantined_db(path, &quarantined);
+                    Err(first_err)
+                }
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Does this error mean the file itself is damaged (as opposed to a migration bug, a full
+/// disk, or a permissions problem)?
+fn is_corruption_error(err: &rusqlite::Error) -> bool {
+    use rusqlite::ffi::ErrorCode;
+    match err {
+        rusqlite::Error::SqliteFailure(inner, _) => matches!(
+            inner.code,
+            ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase
+        ),
+        _ => false,
+    }
+}
+
+fn restore_quarantined_db(path: &str, quarantined: &str) {
+    let _ = std::fs::rename(quarantined, path);
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::rename(
+            format!("{}{}", quarantined, suffix),
+            format!("{}{}", path, suffix),
+        );
+    }
+}
+
+/// Move a broken database (and its WAL/SHM sidecars) out of the way. Never deletes: the file
+/// may still be recoverable by hand, and it is the user's only copy of their history.
+fn quarantine_corrupt_db(path: &str) -> Option<String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let target = format!("{}.corrupt-{}", path, stamp);
+    if std::fs::rename(path, &target).is_err() {
+        return None;
+    }
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::rename(
+            format!("{}{}", path, suffix),
+            format!("{}{}", target, suffix),
+        );
+    }
+    Some(target)
+}
+
+fn open_and_prepare_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
+
+    // `Connection::open` is lazy, so a damaged file only surfaces on first real use. Force
+    // that now, while the caller can still recover. Reading the schema is enough to parse the
+    // header and the schema pages — it catches "not a database" and header corruption — and
+    // unlike `PRAGMA quick_check` it does not walk every page, which on a large history would
+    // add seconds to every cold start.
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
 
     // Performance and space pragmas
     conn.execute_batch(

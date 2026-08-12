@@ -10,7 +10,7 @@ use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -42,7 +42,9 @@ const BLOB_KIND_CONTENT: &str = "content";
 const BLOB_KIND_HTML: &str = "html";
 const BLOB_THRESHOLD_CONTENT: usize = 12 * 1024;
 const BLOB_THRESHOLD_HTML: usize = 24 * 1024;
-const WEBDAV_REQUEST_TIMEOUT_SECS: u64 = 45;
+const WEBDAV_CONNECT_TIMEOUT_SECS: u64 = 20;
+/// Applies between bytes, not to the whole transfer, so large uploads aren't cut off.
+const WEBDAV_READ_TIMEOUT_SECS: u64 = 45;
 const WEBDAV_MAX_RETRIES: usize = 3;
 const WEBDAV_JSON_READ_RETRIES: usize = 3;
 const WEBDAV_RETRY_BASE_DELAY_MS: u64 = 600;
@@ -242,6 +244,13 @@ struct WebDavDeviceHead {
     snapshot_op_seq: i64,
     #[serde(default)]
     settings_updated_at: i64,
+    /// Identifies one *installation* of a device, regenerated whenever the local data is
+    /// recreated. Device ids are derived from the machine, so a reinstall reuses the id but
+    /// restarts its op sequence at 1 — and because head fields only ever move forward via
+    /// `max()`, peers cannot notice that from the sequence numbers alone and would skip
+    /// every op the reinstalled device publishes. Empty when written by an older client.
+    #[serde(default)]
+    install_epoch: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -560,6 +569,10 @@ fn is_setting_sync_eligible(key: &str) -> bool {
             | "ai_profiles"
             | "mqtt_password"
             | "mqtt_username"
+            // Per-installation state. This must travel with cloud_sync_webdav_local_seq:
+            // syncing the epoch would make every device report the same one, which both
+            // defeats reinstall detection and makes peers reset their cursors for no reason.
+            | "cloud_sync_install_epoch"
     )
 }
 
@@ -639,6 +652,11 @@ fn seal_item_for_push(
 /// (wrong passphrase / tampered). Reset at the start of each run and surfaced in the
 /// sync status so the UI can tell the user their passphrase looks wrong.
 static E2E_UNDECRYPTABLE: AtomicI64 = AtomicI64::new(0);
+
+/// Count of remote op batches skipped in the current run because they (or an attachment they
+/// reference) could not be read. Skipping keeps one bad batch from stalling a device forever,
+/// but the user still needs to know some remote changes did not arrive.
+static WEBDAV_SKIPPED_OPS: AtomicUsize = AtomicUsize::new(0);
 
 /// Does this item carry any sealed field? Used to avoid cloning items needlessly.
 fn item_has_sealed_fields(item: &CloudSyncItem) -> bool {
@@ -1258,7 +1276,72 @@ fn set_local_webdav_op_seq(app: &AppHandle, seq: i64) {
     set_setting_i64(app, CLOUD_SYNC_WEBDAV_LOCAL_SEQ_KEY, seq);
 }
 
-fn load_webdav_op_cursor_map(app: &AppHandle) -> HashMap<String, i64> {
+/// Stable identity of the WebDAV account + folder that per-account local state belongs to.
+/// Includes the username because providers such as Jianguoyun serve every account from the
+/// same DAV URL, so url + path alone would make a different account look like the same one.
+fn webdav_account_fingerprint(cfg: &CloudSyncConfig) -> String {
+    sha256_hex(
+        format!(
+            "{}\u{0}{}\u{0}{}",
+            cfg.webdav_url.trim(),
+            cfg.webdav_username.trim(),
+            normalize_webdav_base_path(&cfg.webdav_base_path)
+        )
+        .as_bytes(),
+    )
+}
+
+/// Result of one incremental pull.
+struct PullOpsOutcome {
+    received: usize,
+    head_stale: bool,
+    /// Cursor advances that are only valid once the corresponding peer snapshot has been
+    /// applied; see the comment at the point they are produced.
+    pending_skips: Vec<(String, i64)>,
+}
+
+/// Op cursors, tagged with the account they were recorded against.
+#[derive(Serialize, Deserialize, Default)]
+struct WebDavOpCursorStore {
+    #[serde(default)]
+    account: String,
+    #[serde(default)]
+    cursors: HashMap<String, i64>,
+    /// Last seen `install_epoch` per peer, so a peer that was reinstalled can be detected
+    /// and replayed from the beginning instead of being silently skipped forever.
+    #[serde(default)]
+    epochs: HashMap<String, String>,
+}
+
+/// This installation's epoch, created once and kept until the local data is recreated.
+fn local_install_epoch(app: &AppHandle) -> String {
+    const KEY: &str = "cloud_sync_install_epoch";
+    let Some(db_state) = app.try_state::<DbState>() else {
+        return String::new();
+    };
+    // Distinguish "not set yet" from "couldn't read it". On a read error, minting a new epoch
+    // would overwrite a perfectly good one and make every peer believe this device was
+    // reinstalled; publishing nothing is the safe default (peers just skip the check).
+    match db_state.settings_repo.get(KEY) {
+        Ok(Some(existing)) if !existing.trim().is_empty() => existing,
+        Ok(_) => {
+            let epoch = uuid::Uuid::new_v4().to_string();
+            // Only publish an epoch that actually reached disk. Publishing an unpersisted one
+            // would produce a different value every run, resetting peers' cursors forever.
+            match db_state.settings_repo.set(KEY, &epoch) {
+                Ok(()) => epoch,
+                Err(_) => String::new(),
+            }
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// Cursors are only meaningful for the account they were recorded against. Pointing the app
+/// at a different WebDAV account or base path previously kept the old cursors, which then
+/// suppressed the new account's ops (their sequence numbers start below the stale cursor).
+/// A legacy untagged payload deserializes to an empty, account-less store and is discarded.
+fn load_webdav_op_cursor_store(app: &AppHandle, account_fp: &str) -> WebDavOpCursorStore {
     let raw = app
         .try_state::<DbState>()
         .and_then(|db| {
@@ -1269,18 +1352,51 @@ fn load_webdav_op_cursor_map(app: &AppHandle) -> HashMap<String, i64> {
         })
         .unwrap_or_default();
     if raw.trim().is_empty() {
-        return HashMap::new();
+        return WebDavOpCursorStore::default();
     }
-    serde_json::from_str::<HashMap<String, i64>>(&raw).unwrap_or_default()
+    match serde_json::from_str::<WebDavOpCursorStore>(&raw) {
+        Ok(store) if store.account == account_fp => store,
+        _ => WebDavOpCursorStore::default(),
+    }
 }
 
-fn save_webdav_op_cursor_map(app: &AppHandle, map: &HashMap<String, i64>) {
+fn load_webdav_op_cursor_map(app: &AppHandle, account_fp: &str) -> HashMap<String, i64> {
+    load_webdav_op_cursor_store(app, account_fp).cursors
+}
+
+fn save_webdav_op_cursor_store(app: &AppHandle, account_fp: &str, store: &WebDavOpCursorStore) {
     if let Some(db_state) = app.try_state::<DbState>() {
-        let payload = serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string());
+        let payload = serde_json::to_string(&WebDavOpCursorStore {
+            account: account_fp.to_string(),
+            cursors: store.cursors.clone(),
+            epochs: store.epochs.clone(),
+        })
+        .unwrap_or_else(|_| "{}".to_string());
         let _ = db_state
             .settings_repo
             .set(CLOUD_SYNC_WEBDAV_OP_CURSOR_MAP_KEY, &payload);
     }
+}
+
+/// Persist cursor advances over ranges a peer has already folded into its snapshot. Only call
+/// once that snapshot has actually been applied this run.
+fn commit_webdav_pending_skips(app: &AppHandle, cfg: &CloudSyncConfig, skips: &[(String, i64)]) {
+    if skips.is_empty() {
+        return;
+    }
+    let account_fp = webdav_account_fingerprint(cfg);
+    let mut store = load_webdav_op_cursor_store(app, &account_fp);
+    for (device_id, seq) in skips {
+        let entry = store.cursors.entry(device_id.clone()).or_insert(0);
+        *entry = (*entry).max(*seq);
+    }
+    save_webdav_op_cursor_store(app, &account_fp, &store);
+}
+
+fn save_webdav_op_cursor_map(app: &AppHandle, account_fp: &str, map: &HashMap<String, i64>) {
+    let mut store = load_webdav_op_cursor_store(app, account_fp);
+    store.cursors = map.clone();
+    save_webdav_op_cursor_store(app, account_fp, &store);
 }
 
 fn load_webdav_blob_cache(app: &AppHandle) -> HashMap<String, i64> {
@@ -1776,7 +1892,12 @@ fn cloud_sync_target_not_ready_message(cfg: &CloudSyncConfig) -> String {
 
 fn build_http_client() -> AppResult<Client> {
     Client::builder()
-        .timeout(Duration::from_secs(WEBDAV_REQUEST_TIMEOUT_SECS))
+        // Per-phase timeouts rather than one total deadline. A single overall timeout counts
+        // body upload time too, so a large snapshot on a slow link gets killed mid-transfer
+        // and then fails identically on every retry. connect/read deadlines still catch a
+        // dead or stalled server, but let a healthy slow transfer finish.
+        .connect_timeout(Duration::from_secs(WEBDAV_CONNECT_TIMEOUT_SECS))
+        .read_timeout(Duration::from_secs(WEBDAV_READ_TIMEOUT_SECS))
         .build()
         .map_err(|e| AppError::Network(e.to_string()))
 }
@@ -2094,11 +2215,17 @@ async fn upload_webdav_json_resource(
     upload_webdav_bytes_resource(client, cfg, relative_path, body, "application/json", label).await
 }
 
+/// `truncation_is_corruption` decides how a premature EOF that outlived every retry is
+/// reported. For most resources a truncated read means "we caught it mid-upload", so it is a
+/// transient `Network` error and the caller retries later. For the sync head there is no
+/// later: nothing rewrites that file unless a caller decides it is damaged, so a persistently
+/// truncated head must be reported as `Validation` or sync stays broken forever.
 async fn fetch_webdav_json_resource<T, F>(
     mut make_request: F,
     missing_status: u16,
     fetch_error_label: &str,
     parse_error_label: &str,
+    truncation_is_corruption: bool,
 ) -> AppResult<Option<T>>
 where
     T: for<'de> Deserialize<'de>,
@@ -2137,14 +2264,40 @@ where
             {
                 sleep(webdav_retry_delay(attempt)).await;
             }
-            Err(err) => return Err(AppError::Network(format!("{}: {}", parse_error_label, err))),
+            // Validation (not Network) marks "the bytes arrived but are not valid data".
+            // Callers must treat the two differently: a corrupt resource will never become
+            // readable by retrying, so it has to be skipped or rebuilt, whereas a network
+            // failure must be retried and must not be mistaken for permanent damage.
+            //
+            // A premature EOF usually means we read a file mid-upload (WebDAV PUT is rarely
+            // atomic), so by default it is transient — calling it corruption would let
+            // callers permanently skip a batch that is about to become perfectly valid.
+            // See `truncation_is_corruption` for the resource where the opposite holds.
+            Err(err) if matches!(err.classify(), serde_json::error::Category::Eof) => {
+                let message = format!("{}: truncated read: {}", parse_error_label, err);
+                return Err(if truncation_is_corruption {
+                    AppError::Validation(message)
+                } else {
+                    AppError::Network(message)
+                });
+            }
+            Err(err) => {
+                return Err(AppError::Validation(format!(
+                    "{}: {}",
+                    parse_error_label, err
+                )))
+            }
         }
     }
 
-    Err(AppError::Network(format!(
-        "{}: exhausted retries",
-        parse_error_label
-    )))
+    // Unreachable in practice (the final attempt returns from the match above), but keep the
+    // classification consistent with the truncation policy rather than hard-coding one.
+    let message = format!("{}: exhausted retries", parse_error_label);
+    Err(if truncation_is_corruption {
+        AppError::Validation(message)
+    } else {
+        AppError::Network(message)
+    })
 }
 
 async fn ensure_webdav_directories(
@@ -2375,6 +2528,7 @@ async fn fetch_webdav_snapshot(
         404,
         "webdav GET snapshot failed",
         "parse snapshot json failed",
+        false,
     )
     .await
 }
@@ -2518,6 +2672,7 @@ async fn fetch_webdav_ops_batch(
         404,
         "webdav GET ops batch failed",
         "parse ops batch json failed",
+        false,
     )
     .await
 }
@@ -2611,6 +2766,7 @@ async fn fetch_webdav_settings_snapshot(
         404,
         "webdav GET settings snapshot failed",
         "parse settings snapshot json failed",
+        false,
     )
     .await
 }
@@ -2697,6 +2853,9 @@ async fn fetch_webdav_sync_head(
         404,
         "webdav GET head failed",
         "parse head json failed",
+        // Only a reader declaring it broken ever gets head.json rewritten, so a truncated
+        // one must count as corruption or sync never recovers from a half-written file.
+        true,
     )
     .await
 }
@@ -2812,17 +2971,7 @@ async fn prepare_e2e_cryptor(
     // app at a different WebDAV account/base path would leave the previous account's salt
     // looking like "ours" and wedge sync permanently (the guard below would keep refusing to
     // bootstrap the new, genuinely empty account).
-    // The username is part of the identity: providers like Jianguoyun serve every account
-    // from one DAV URL, so url+path alone would make a different account look like the same one.
-    let account_fp = sha256_hex(
-        format!(
-            "{}\u{0}{}\u{0}{}",
-            cfg.webdav_url.trim(),
-            cfg.webdav_username.trim(),
-            normalize_webdav_base_path(&cfg.webdav_base_path)
-        )
-        .as_bytes(),
-    );
+    let account_fp = webdav_account_fingerprint(cfg);
     let local_salt = match (
         db_state
             .settings_repo
@@ -2872,17 +3021,24 @@ async fn prepare_e2e_cryptor(
         return Ok(None);
     }
 
-    let passphrase = db_state
-        .settings_repo
-        .get("cloud_sync_e2e_passphrase")
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    if passphrase.trim().is_empty() {
-        return Err(AppError::Validation(
-            "端到端加密已开启但未设置口令；为避免明文上传，本次同步已中止".to_string(),
-        ));
-    }
+    use crate::infrastructure::repository::settings_repo::SecretState;
+    let passphrase = match db_state.settings_repo.get_secret("cloud_sync_e2e_passphrase") {
+        Ok(SecretState::Value(value)) if !value.trim().is_empty() => value,
+        // The stored passphrase exists but can't be decrypted on this machine. Saying
+        // "not set" here would invite the user to type a *new* passphrase, which would
+        // re-key the account and make every existing ciphertext unreadable forever.
+        Ok(SecretState::Unreadable) => {
+            return Err(AppError::Validation(
+                "本机保存的端到端加密口令已无法读取（通常由重装系统、更换 Windows 账户或迁移配置目录引起）。请重新输入与其它设备相同的**原口令**；若已遗忘，只能在服务端删除 e2e.json 及已同步数据后重新初始化"
+                    .to_string(),
+            ));
+        }
+        _ => {
+            return Err(AppError::Validation(
+                "端到端加密已开启但未设置口令；为避免明文上传，本次同步已中止".to_string(),
+            ));
+        }
+    };
 
     match fetch_webdav_e2e_descriptor(client, cfg, &e2e_path).await? {
         Some(desc) => {
@@ -3031,7 +3187,26 @@ async fn resolve_webdav_sync_head(
     paths: &WebDavPaths,
     now: i64,
 ) -> AppResult<WebDavSyncHead> {
-    let fetched = fetch_webdav_sync_head(client, cfg, &paths.head_path).await?;
+    // head.json is rewritten almost every round, so a crash or a server that can't do an
+    // atomic MOVE can leave it truncated. Rebuilding used to trigger only on 404, which made
+    // a corrupt head terminal: every later sync failed at this first step forever, and the
+    // only user-discoverable escape was switching to a fresh sync folder. Treat *any* read
+    // failure as "rebuild" instead — if the real cause was the network, the rebuild's own
+    // requests fail and the error surfaces there anyway.
+    let fetched = match fetch_webdav_sync_head(client, cfg, &paths.head_path).await {
+        Ok(head) => head,
+        // Only a *corrupt* head triggers a rebuild. Network/auth failures propagate: they say
+        // nothing about the file's contents, and rebuilding would replace a useful error with
+        // a confusing one while adding load exactly when the server is unhappy.
+        Err(AppError::Validation(msg)) => {
+            crate::error!(
+                "[SYNC] sync head is corrupt ({}); rebuilding it from server state",
+                msg
+            );
+            None
+        }
+        Err(err) => return Err(err),
+    };
     let needs_rebuild = fetched.is_none() || should_rebuild_webdav_head(app, now);
 
     if !needs_rebuild {
@@ -3065,10 +3240,14 @@ async fn pull_remote_webdav_ops_from_head(
     ops_path: &str,
     head: &WebDavSyncHead,
     cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
-) -> AppResult<(usize, bool)> {
-    let mut cursor_map = load_webdav_op_cursor_map(app);
+) -> AppResult<PullOpsOutcome> {
+    let account_fp = webdav_account_fingerprint(cfg);
+    let mut store = load_webdav_op_cursor_store(app, &account_fp);
+    let mut cursor_map = std::mem::take(&mut store.cursors);
     let mut received = 0usize;
     let mut head_stale = false;
+    let mut skipped = 0usize;
+    let mut pending_skips: Vec<(String, i64)> = Vec::new();
 
     for (device_id, device_head) in &head.devices {
         if crate::app::system::same_anon_id(device_id, &cfg.device_id) {
@@ -3079,22 +3258,94 @@ async fn pull_remote_webdav_ops_from_head(
         }
 
         let mut last_seq = cursor_map.get(device_id).copied().unwrap_or(0);
+
+        // A reinstalled peer keeps its device id but restarts its op sequence at 1, so every
+        // op it publishes lands below our cursor and would be skipped forever. Sequence
+        // numbers can't reveal this (head fields only move forward via `max()`), so compare
+        // the installation epoch instead. Skipped when the peer runs an older client that
+        // doesn't publish one — no epoch is better than a wrong reset.
+        let mut epoch_reset = false;
+        if !device_head.install_epoch.is_empty() {
+            let known = store.epochs.get(device_id);
+            if known.is_some_and(|seen| seen != &device_head.install_epoch) {
+                crate::error!(
+                    "[SYNC] peer {} was reinstalled; replaying its ops from the start",
+                    device_id
+                );
+                last_seq = 0;
+                cursor_map.insert(device_id.clone(), 0);
+                epoch_reset = true;
+            }
+            store
+                .epochs
+                .insert(device_id.clone(), device_head.install_epoch.clone());
+        }
+
+        // Everything up to the peer's published snapshot is carried by that snapshot, and the
+        // peer deletes those op files afterwards, so walking the range would be thousands of
+        // 404s for a peer we're far behind. Step over it instead — but not straight after an
+        // epoch reset: a reinstalled peer's snapshot_op_seq still describes its *previous*
+        // installation (head fields only ever move forward), so honouring it here would undo
+        // the reset we just made and skip exactly the ops we need.
+        //
+        // The skip is recorded as pending rather than written to the cursor: it is only safe
+        // once that peer's snapshot has actually been applied, so the caller commits it after
+        // the snapshot pull succeeds. Persisting it here would drop the range for good if the
+        // round failed before the snapshot arrived.
+        if !epoch_reset && device_head.snapshot_op_seq > last_seq {
+            last_seq = device_head.snapshot_op_seq;
+            pending_skips.push((device_id.clone(), last_seq));
+            head_stale = true;
+        }
+
         if device_head.latest_op_seq <= last_seq {
             continue;
         }
 
         for seq in (last_seq + 1)..=device_head.latest_op_seq {
             if cloud_sync_cancel_requested() {
-                return Ok((received, head_stale));
+                return Ok(PullOpsOutcome {
+                    received,
+                    head_stale,
+                    pending_skips,
+                });
             }
 
             let op_ref = WebDavOpRef {
                 device_id: device_id.clone(),
                 seq,
             };
-            match fetch_webdav_ops_batch(client, cfg, ops_path, &op_ref).await? {
-                Some(mut batch) if batch.device_id == op_ref.device_id => {
-                    enrich_item_blobs_after_pull(
+            // Every failure below is contained to this one batch. Propagating it would abort
+            // the whole round *and* discard the progress already made for other devices,
+            // because the cursor map is only persisted after the loop — one unreadable op or
+            // one missing blob would then stall that device permanently ("poison cursor").
+            let fetched = match fetch_webdav_ops_batch(client, cfg, ops_path, &op_ref).await {
+                Ok(fetched) => fetched,
+                // Corrupt batch: retrying can never fix it. Step the cursor past it so this
+                // device keeps making progress — skipping without advancing would stop at the
+                // same sequence number on every future run, which is the stall this is meant
+                // to prevent. Its contents are recovered from the peer's snapshot.
+                Err(AppError::Validation(msg)) => {
+                    crate::error!("[SYNC] skipping corrupt op {}#{}: {}", device_id, seq, msg);
+                    skipped += 1;
+                    head_stale = true;
+                    last_seq = seq;
+                    cursor_map.insert(device_id.clone(), last_seq);
+                    continue;
+                }
+                // Transient (network/auth): leave the cursor alone and retry next run.
+                Err(err) => {
+                    crate::error!("[SYNC] deferring op {}#{}: {}", device_id, seq, err);
+                    break;
+                }
+            };
+            match fetched {
+                // same_anon_id, not `==`: device ids come in a legacy long form and a
+                // normalized short form. A plain comparison would call a legitimate batch
+                // "someone else's" and — now that the mismatch arm advances the cursor —
+                // discard it permanently instead of retrying.
+                Some(mut batch) if crate::app::system::same_anon_id(&batch.device_id, &op_ref.device_id) => {
+                    if let Err(err) = enrich_item_blobs_after_pull(
                         app,
                         client,
                         cfg,
@@ -3102,22 +3353,49 @@ async fn pull_remote_webdav_ops_from_head(
                         &mut batch.entries,
                         cryptor,
                     )
-                    .await?;
+                    .await
+                    {
+                        crate::error!(
+                            "[SYNC] deferring op {}#{} (attachment unavailable): {}",
+                            device_id,
+                            seq,
+                            err
+                        );
+                        // Attachments can reappear (a partial upload finishing, a transient
+                        // 5xx), so don't burn the cursor here — retry on the next run.
+                        skipped += 1;
+                        head_stale = true;
+                        break;
+                    }
                     received +=
                         apply_remote_changes(app, &batch.entries, &cfg.content_prefs, cryptor)?;
                     last_seq = last_seq.max(batch.seq).max(seq);
                     cursor_map.insert(device_id.clone(), last_seq);
                 }
+                // Absent (404) or belonging to another device. A peer deletes its ops once
+                // the corresponding snapshot is published, so these are expected gaps whose
+                // contents the snapshot already carries — step over them instead of
+                // re-requesting the same missing file on every run forever.
                 Some(_) | None => {
                     head_stale = true;
-                    break;
+                    last_seq = seq;
+                    cursor_map.insert(device_id.clone(), last_seq);
+                    continue;
                 }
             }
         }
     }
 
-    save_webdav_op_cursor_map(app, &cursor_map);
-    Ok((received, head_stale))
+    store.cursors = cursor_map;
+    save_webdav_op_cursor_store(app, &account_fp, &store);
+    if skipped > 0 {
+        WEBDAV_SKIPPED_OPS.fetch_add(skipped, Ordering::Relaxed);
+    }
+    Ok(PullOpsOutcome {
+        received,
+        head_stale,
+        pending_skips,
+    })
 }
 
 async fn pull_remote_webdav_snapshots_from_head(
@@ -3150,10 +3428,23 @@ async fn pull_remote_webdav_snapshots_from_head(
         if cloud_sync_cancel_requested() {
             break;
         }
-        if let Some(mut snapshot) =
-            fetch_webdav_snapshot(client, cfg, devices_path, &device_id).await?
-        {
-            enrich_item_blobs_after_pull(
+        // One unreadable peer must not sink the whole round. Snapshots now reference blobs
+        // rather than inlining them, so a single missing attachment became able to fail
+        // every sync; skip that peer and report it instead, matching the op path.
+        let fetched = match fetch_webdav_snapshot(client, cfg, devices_path, &device_id).await {
+            Ok(fetched) => fetched,
+            // Corrupt: skip this peer so one bad file can't block the others.
+            Err(AppError::Validation(msg)) => {
+                crate::error!("[SYNC] skipping corrupt snapshot from {}: {}", device_id, msg);
+                WEBDAV_SKIPPED_OPS.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+            // Transient: propagate, so the run is not recorded as a completed snapshot pull
+            // and the real network/auth error isn't reported as file damage.
+            Err(err) => return Err(err),
+        };
+        if let Some(mut snapshot) = fetched {
+            if let Err(err) = enrich_item_blobs_after_pull(
                 app,
                 client,
                 cfg,
@@ -3161,7 +3452,16 @@ async fn pull_remote_webdav_snapshots_from_head(
                 &mut snapshot.entries,
                 cryptor,
             )
-            .await?;
+            .await
+            {
+                crate::error!(
+                    "[SYNC] skipping snapshot from {} (attachment unavailable): {}",
+                    device_id,
+                    err
+                );
+                WEBDAV_SKIPPED_OPS.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
             remote_items.extend(snapshot.entries);
         }
     }
@@ -3295,7 +3595,8 @@ async fn pull_remote_webdav_ops(
         return Ok(0);
     }
 
-    let mut cursor_map = load_webdav_op_cursor_map(app);
+    let account_fp = webdav_account_fingerprint(cfg);
+    let mut cursor_map = load_webdav_op_cursor_map(app, &account_fp);
     let mut received = 0usize;
     let _total_refs = refs.len();
     for (_index, op_ref) in refs.into_iter().enumerate() {
@@ -3310,8 +3611,25 @@ async fn pull_remote_webdav_ops(
             continue;
         }
 
-        if let Some(mut batch) = fetch_webdav_ops_batch(client, cfg, ops_path, &op_ref).await? {
-            if batch.device_id != op_ref.device_id {
+        // Same containment as the head-driven path: one damaged batch is skipped and counted
+        // rather than aborting the run, and device ids are compared with same_anon_id so a
+        // legacy long-form id isn't mistaken for another device's batch.
+        let fetched = match fetch_webdav_ops_batch(client, cfg, ops_path, &op_ref).await {
+            Ok(fetched) => fetched,
+            Err(AppError::Validation(msg)) => {
+                crate::error!(
+                    "[SYNC] skipping corrupt op {}#{}: {}",
+                    op_ref.device_id,
+                    op_ref.seq,
+                    msg
+                );
+                WEBDAV_SKIPPED_OPS.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        if let Some(mut batch) = fetched {
+            if !crate::app::system::same_anon_id(&batch.device_id, &op_ref.device_id) {
                 continue;
             }
             if cloud_sync_cancel_requested() {
@@ -3324,7 +3642,7 @@ async fn pull_remote_webdav_ops(
             cursor_map.insert(op_ref.device_id.clone(), next_seq);
         }
     }
-    save_webdav_op_cursor_map(app, &cursor_map);
+    save_webdav_op_cursor_map(app, &account_fp, &cursor_map);
     Ok(received)
 }
 
@@ -3422,17 +3740,35 @@ async fn sync_once_webdav(
     // If E2E is on but no usable key can be established, prepare_e2e_cryptor returns Err
     // and this `?` aborts the run — we must never silently fall back to a cleartext upload.
     E2E_UNDECRYPTABLE.store(0, Ordering::Relaxed);
+    WEBDAV_SKIPPED_OPS.store(0, Ordering::Relaxed);
     let cryptor_owned = prepare_e2e_cryptor(app, &client, cfg).await?;
     let cryptor = cryptor_owned.as_deref();
 
     let mut sync_head = resolve_webdav_sync_head(app, &client, cfg, &paths, now).await?;
     let mut sync_head_dirty = false;
+
+    // Publish this installation's epoch so peers can distinguish "reinstalled and restarted
+    // its op numbering" from "quiet for a while". Rebuilding the head drops it, hence the
+    // check on every run rather than one-time initialisation.
+    let install_epoch = local_install_epoch(app);
+    if !install_epoch.is_empty()
+        && sync_head
+            .devices
+            .get(&cfg.device_id)
+            .map(|device| device.install_epoch != install_epoch)
+            .unwrap_or(true)
+    {
+        update_webdav_head_device(&mut sync_head, &cfg.device_id, |device| {
+            device.install_epoch = install_epoch.clone();
+        });
+        sync_head_dirty = true;
+    }
     let mut webdav_blob_cache = load_webdav_blob_cache(app);
     let should_pull_snapshot = force_snapshot
         || should_pull_webdav_snapshot(
             app,
             now,
-            !load_webdav_op_cursor_map(app).is_empty(),
+            !load_webdav_op_cursor_map(app, &webdav_account_fingerprint(cfg)).is_empty(),
             cfg.snapshot_interval_secs,
         );
     let should_push_snapshot =
@@ -3451,6 +3787,9 @@ async fn sync_once_webdav(
             cryptor,
         )
         .await?;
+        // Record the uploaded blobs immediately. Several fallible steps follow, and losing
+        // the cache to one of them means re-uploading every blob on the next run.
+        save_webdav_blob_cache(app, &webdav_blob_cache);
         for chunk in processed_delta.chunks(WEBDAV_OP_BATCH_SIZE) {
             if cloud_sync_cancel_requested() {
                 return Ok(disabled_status());
@@ -3471,7 +3810,7 @@ async fn sync_once_webdav(
         return Ok(disabled_status());
     }
 
-    let (mut received_items, head_stale) = pull_remote_webdav_ops_from_head(
+    let ops_outcome = pull_remote_webdav_ops_from_head(
         app,
         &client,
         cfg,
@@ -3481,13 +3820,23 @@ async fn sync_once_webdav(
         cryptor,
     )
     .await?;
-    if head_stale {
-        let rebuilt = rebuild_webdav_sync_head(&client, cfg, &paths).await?;
-        if rebuilt != sync_head {
-            sync_head = rebuilt;
-            sync_head.updated_at = now_ms();
-            upload_webdav_sync_head(&client, cfg, &paths.head_path, &sync_head).await?;
-            touch_webdav_head_rebuild_at(app, now);
+    let mut received_items = ops_outcome.received;
+    if ops_outcome.head_stale {
+        // A corrupt peer file must not sink the round: fall back to the head we already have,
+        // exactly as resolve_webdav_sync_head does, instead of propagating.
+        match rebuild_webdav_sync_head(&client, cfg, &paths).await {
+            Ok(rebuilt) => {
+                if rebuilt != sync_head {
+                    sync_head = rebuilt;
+                    sync_head.updated_at = now_ms();
+                    upload_webdav_sync_head(&client, cfg, &paths.head_path, &sync_head).await?;
+                    touch_webdav_head_rebuild_at(app, now);
+                }
+            }
+            Err(AppError::Validation(msg)) => {
+                crate::error!("[SYNC] head rebuild hit corrupt remote data ({}); continuing with the current head", msg);
+            }
+            Err(err) => return Err(err),
         }
         received_items += pull_remote_webdav_ops(
             app,
@@ -3508,6 +3857,13 @@ async fn sync_once_webdav(
             cryptor,
         )
         .await?;
+        // The snapshots that cover the skipped op ranges have now been applied, so the cursor
+        // advances are safe to persist. Not after a cancellation though: the snapshot loop
+        // exits early and returns Ok, so committing then would step over ranges whose
+        // snapshots were never pulled.
+        if !cloud_sync_cancel_requested() {
+            commit_webdav_pending_skips(app, cfg, &ops_outcome.pending_skips);
+        }
     }
 
     // Incremental Emoji Sync check
@@ -3565,25 +3921,31 @@ async fn sync_once_webdav(
         // here as well or E2E users would publish a cleartext copy of everything. Seal a
         // COPY: `local_items` backs the plaintext-derived content_hash / sync index computed
         // at the top of this run and must stay cleartext.
-        let sealed_snapshot: Option<Vec<CloudSyncItem>> = match cryptor {
-            Some(key) => {
-                let mut copy = local_items.clone();
-                for item in copy.iter_mut() {
-                    seal_item_for_push(key, item)
-                        .map_err(|e| AppError::Internal(format!("e2e seal failed: {}", e)))?;
-                }
-                Some(copy)
-            }
-            None => None,
-        };
-        let snapshot_items: &[CloudSyncItem] =
-            sealed_snapshot.as_deref().unwrap_or(&local_items);
+        //
+        // Route the copy through the same blob offloading the incremental path uses. Without
+        // it the snapshot inlines every image as a base64 data URL into one JSON document,
+        // which grows with the history until the upload can no longer finish — after which
+        // every subsequent sync fails at the same step. This also handles sealing, so the
+        // snapshot no longer needs its own seal pass.
+        let mut snapshot_items = local_items.clone();
+        process_items_blobs_before_push(
+            &client,
+            cfg,
+            &paths.blobs_path,
+            &mut webdav_blob_cache,
+            &mut snapshot_items,
+            cryptor,
+        )
+        .await?;
+        // Persist the cache as soon as the uploads succeed: a failure further down this block
+        // would otherwise discard the record and re-upload the same blobs next run.
+        save_webdav_blob_cache(app, &webdav_blob_cache);
         upload_webdav_snapshot(
             &client,
             cfg,
             &paths.devices_path,
             latest_op_seq,
-            snapshot_items,
+            &snapshot_items,
         )
         .await?;
         uploaded_items += local_items.len();
@@ -3622,13 +3984,24 @@ async fn sync_once_webdav(
     // Surface items we had to skip because they couldn't be unsealed, so the UI can tell
     // the user their E2E passphrase looks wrong instead of silently dropping content.
     let undecryptable = E2E_UNDECRYPTABLE.load(Ordering::Relaxed);
-    let last_error = if undecryptable > 0 {
-        Some(format!(
+    let skipped_ops = WEBDAV_SKIPPED_OPS.swap(0, Ordering::Relaxed);
+    let mut notices = Vec::new();
+    if undecryptable > 0 {
+        notices.push(format!(
             "有 {} 条云端内容无法解密（端到端加密口令可能不匹配），已跳过",
             undecryptable
-        ))
-    } else {
+        ));
+    }
+    if skipped_ops > 0 {
+        notices.push(format!(
+            "有 {} 批云端变更无法读取（文件损坏或附件缺失），已跳过以免同步卡死",
+            skipped_ops
+        ));
+    }
+    let last_error = if notices.is_empty() {
         None
+    } else {
+        Some(notices.join("；"))
     };
 
     Ok(CloudSyncStatus {
@@ -4029,9 +4402,10 @@ fn merge_remote_emojis(app: &AppHandle, remote_json: &str) -> AppResult<()> {
 mod tests {
     use super::{
         normalize_item_for_sync, open_item_after_pull, rewrite_rich_html_resources_for_sync,
-        seal_item_for_push, CloudSyncItem, RICH_IMAGE_FALLBACK_PREFIX,
+        seal_item_for_push, CloudSyncItem, WebDavOpCursorStore, RICH_IMAGE_FALLBACK_PREFIX,
         RICH_IMAGE_FALLBACK_SUFFIX,
     };
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -4072,6 +4446,40 @@ mod tests {
         assert!(!rewritten.contains(&format!("file://{}", image_path_str)));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn op_cursors_are_scoped_to_their_account() {
+        // Cursors recorded against one account must not apply to another, otherwise pointing
+        // the app at a different WebDAV account/folder suppresses that account's ops (their
+        // sequence numbers start below the stale cursor) and it silently never syncs.
+        let store = WebDavOpCursorStore {
+            account: "account-a".to_string(),
+            cursors: HashMap::from([("peer".to_string(), 42i64)]),
+            epochs: HashMap::from([("peer".to_string(), "epoch-1".to_string())]),
+        };
+        let raw = serde_json::to_string(&store).unwrap();
+
+        let same: WebDavOpCursorStore = serde_json::from_str(&raw).unwrap();
+        assert_eq!(same.account, "account-a");
+        assert_eq!(same.cursors.get("peer"), Some(&42));
+
+        assert_eq!(same.epochs.get("peer").map(String::as_str), Some("epoch-1"));
+
+        // A legacy untagged payload has no account and must be discarded, not adopted.
+        let legacy: WebDavOpCursorStore = serde_json::from_str(r#"{"peer":42}"#).unwrap();
+        assert!(legacy.account.is_empty());
+        assert!(legacy.cursors.is_empty());
+    }
+
+    #[test]
+    fn device_head_install_epoch_is_backward_compatible() {
+        // An older peer publishes no epoch; that must deserialize to empty (and therefore
+        // disable the reinstall check) rather than failing to parse the whole head.
+        let legacy: super::WebDavDeviceHead =
+            serde_json::from_str(r#"{"latest_op_seq":7,"snapshot_op_seq":3}"#).unwrap();
+        assert_eq!(legacy.latest_op_seq, 7);
+        assert!(legacy.install_epoch.is_empty());
     }
 
     #[test]

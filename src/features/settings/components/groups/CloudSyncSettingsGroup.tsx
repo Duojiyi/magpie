@@ -441,7 +441,17 @@ const CloudSyncSettingsGroup = ({
                                 value={cloudSyncE2ePassphrase}
                                 onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
                                 onChange={(e) => setCloudSyncE2ePassphrase(e.target.value)}
-                                onBlur={() => saveCloudSync("cloud_sync_e2e_passphrase", cloudSyncE2ePassphrase)}
+                                onBlur={() => {
+                                    // Never persist an empty passphrase. When the stored one
+                                    // can't be decrypted on this machine the field renders
+                                    // blank, and saving that would overwrite the still-intact
+                                    // ciphertext with an empty value — permanently losing
+                                    // access to everything already encrypted in the cloud.
+                                    // A whitespace-only value is rejected by the backend too,
+                                    // so treat it the same rather than storing it.
+                                    if (!cloudSyncE2ePassphrase.trim()) return;
+                                    saveCloudSync("cloud_sync_e2e_passphrase", cloudSyncE2ePassphrase);
+                                }}
                                 placeholder={t("cloud_sync_e2e_passphrase_placeholder")}
                             />
                         </div>

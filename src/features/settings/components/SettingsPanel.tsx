@@ -7,7 +7,7 @@ import { ChevronRight, HelpCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import type { Locale } from "../../../shared/types";
 import type { DefaultAppsMap, InstalledAppOption, SettingsSubpage, CloudSyncContentPrefs, CardDensity } from "../../app/types";
-import type { AiProfile, AiProfileStatusMap, AppCleanupPolicy, EditableAiProfile } from "../types";
+import type { AiProfile, AiProfileErrorMap, AiProfileStatusMap, AppCleanupPolicy, EditableAiProfile } from "../types";
 import AppSelectorModal from "./AppSelectorModal";
 // Removed UpdateModal imports
 import AiProfileModal from "./AiProfileModal";
@@ -318,6 +318,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
     const [cloudSyncNowRunning, setCloudSyncNowRunning] = useState(false);
     const [editingProfile, setEditingProfile] = useState<EditableAiProfile | null>(null);
     const [profileStatuses, setProfileStatuses] = useState<AiProfileStatusMap>({});
+    const [profileErrors, setProfileErrors] = useState<AiProfileErrorMap>({});
     const [updateStatus, setUpdateStatus] = useState<string>("");
     // Removed updateModalData
     const [openHints, setOpenHints] = useState<Set<string>>(new Set());
@@ -386,6 +387,11 @@ const SettingsPanel = (props: SettingsPanelProps) => {
 
     const checkModelStatus = async (profile: AiProfile) => {
         setProfileStatuses(prev => ({ ...prev, [profile.id]: 'loading' }));
+        setProfileErrors(prev => {
+            const next = { ...prev };
+            delete next[profile.id];
+            return next;
+        });
         try {
             const result = await invoke<string>("check_ai_connectivity", {
                 baseUrl: profile.baseUrl,
@@ -398,6 +404,11 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         } catch (e: unknown) {
             console.error("AI Check failed:", e);
             setProfileStatuses(prev => ({ ...prev, [profile.id]: 'error' }));
+            // Keep the backend's reason; a bare "error" gives the user nothing to act on.
+            setProfileErrors(prev => ({
+                ...prev,
+                [profile.id]: typeof e === "string" ? e : e instanceof Error ? e.message : String(e)
+            }));
         }
     };
 
@@ -848,6 +859,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 saveSetting={saveSetting}
                 aiProfiles={aiProfiles}
                 profileStatuses={profileStatuses}
+                profileErrors={profileErrors}
                 checkModelStatus={checkModelStatus}
                 setEditingProfile={setEditingProfile}
                 handleDeleteProfile={handleDeleteProfile}

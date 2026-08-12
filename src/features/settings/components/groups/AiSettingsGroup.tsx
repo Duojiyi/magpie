@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, ChevronRight, Edit2, RotateCcw, Trash2, Bot } from "lucide-react";
-import type { AiProfile, AiProfileStatusMap, EditableAiProfile } from "../../types";
+import type { AiProfile, AiProfileErrorMap, AiProfileStatusMap, EditableAiProfile } from "../../types";
 
 interface AiSettingsGroupProps {
     t: (key: string) => string;
@@ -11,6 +11,7 @@ interface AiSettingsGroupProps {
     saveSetting: (key: string, val: string) => void;
     aiProfiles: AiProfile[];
     profileStatuses: AiProfileStatusMap;
+    profileErrors: AiProfileErrorMap;
     checkModelStatus: (profile: AiProfile) => void;
     setEditingProfile: (profile: EditableAiProfile) => void;
     handleDeleteProfile: (id: string) => void;
@@ -35,6 +36,7 @@ const AiSettingsGroup = ({
     saveSetting,
     aiProfiles,
     profileStatuses,
+    profileErrors,
     checkModelStatus,
     setEditingProfile,
     handleDeleteProfile,
@@ -119,11 +121,20 @@ const AiSettingsGroup = ({
                                             flexShrink: 0,
                                             boxShadow: profileStatuses[profile.id] === 'none' ? 'none' : '0 0 4px rgba(0,0,0,0.2)'
                                         }}
-                                        title={profileStatuses[profile.id] || 'Unknown'}
+                                        title={profileErrors[profile.id] || profileStatuses[profile.id] || 'Unknown'}
                                     />
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                         <div className="ai-profile-name" style={{ fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profile.model}</div>
                                         {profile.enableThinking && <div className="ai-profile-sub" style={{ fontSize: '9px', opacity: 0.7 }}>Thinking Mode Enabled</div>}
+                                        {profileStatuses[profile.id] === 'error' && profileErrors[profile.id] && (
+                                            <div
+                                                className="ai-profile-sub"
+                                                style={{ fontSize: '9px', color: '#F44336', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                                title={profileErrors[profile.id]}
+                                            >
+                                                {profileErrors[profile.id]}
+                                            </div>
+                                        )}
                                     </div>
                                     <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
                                         <button className="btn-icon" onClick={() => checkModelStatus(profile)} title="Check Connection">

@@ -15,9 +15,11 @@ use windows::Win32::UI::Input::Ime::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetAncestor, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId,
     PostMessageW, WindowFromPoint, GA_ROOT, GUITHREADINFO, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT,
-    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
-    WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
+    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
+#[cfg(target_os = "windows")]
+use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 
 use crate::app::window_manager::{hide_window_cmd, toggle_window};
 use crate::app_state::SettingsState;
@@ -172,6 +174,37 @@ pub fn set_recording_mode(app_handle: AppHandle, enabled: bool) -> Result<(), St
 ///
 /// 局限：仅对经 IMM32 兼容层暴露合成串的输入法有效；Windows 25H2 默认微软输入法的
 /// 纯 TSF 路径可能返回 0，此时回退原行为（不恶化）。详见 docs/ime-25h2-investigation.md。
+/// Cache of the last IME-composition probe: (foreground HWND as usize, instant, result).
+///
+/// The probe itself is a cross-process call that waits on the foreground application's UI
+/// thread. Running it on every keystroke can push a low-level hook callback past
+/// `LowLevelHooksTimeout`, after which Windows ignores our return value and the key we meant
+/// to swallow reaches the other application instead. A short cache keeps the guard's
+/// behaviour while making the hot path a pair of atomic loads.
+#[cfg(target_os = "windows")]
+static IME_PROBE_CACHE: std::sync::Mutex<Option<(usize, std::time::Instant, bool)>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "windows")]
+unsafe fn foreground_ime_composing_cached() -> bool {
+    const TTL: std::time::Duration = std::time::Duration::from_millis(40);
+    let fg = GetForegroundWindow().0 as usize;
+
+    if let Ok(cache) = IME_PROBE_CACHE.try_lock() {
+        if let Some((hwnd, at, result)) = *cache {
+            if hwnd == fg && at.elapsed() < TTL {
+                return result;
+            }
+        }
+    }
+
+    let result = foreground_ime_composing();
+    if let Ok(mut cache) = IME_PROBE_CACHE.try_lock() {
+        *cache = Some((fg, std::time::Instant::now(), result));
+    }
+    result
+}
+
 #[cfg(target_os = "windows")]
 unsafe fn foreground_ime_composing() -> bool {
     let fg = GetForegroundWindow();
@@ -461,9 +494,16 @@ pub unsafe extern "system" fn keyboard_proc(
 
             if is_navigation_key && is_down {
                 // IME 合成守卫（U5 / 需求 14.2）：若前台应用正在输入法合成中，
-                // 放行 ↑/↓/Enter/Esc 给输入法（选候选/上屏/取消），避免抢键吞字。
+                // 放行 Enter/Esc 给输入法（上屏/取消），避免抢键吞字。
                 // 探测不到合成（纯 TSF 或 API 失败）时回退原行为，保证零回归。
-                if foreground_ime_composing() {
+                //
+                // 方向键同样需要这道守卫（微软拼音等在横排候选下用 ↑/↓ 翻页），但
+                // foreground_ime_composing 是跨进程调用（GetGUIThreadInfo / ImmGetContext），
+                // 要等目标线程响应。放在按键热路径上，前台应用繁忙时（例如刷屏中的
+                // Windows Terminal）单次回调可能逼近 LowLevelHooksTimeout(默认 300ms)，
+                // 一旦超时系统就忽略返回值、按键“穿透”过去。因此结果按前台窗口做短时缓存，
+                // 既保住候选翻页，又让热路径几乎总是只读缓存。
+                if foreground_ime_composing_cached() {
                     return CallNextHookEx(None, n_code, w_param, l_param);
                 }
 
@@ -523,7 +563,10 @@ pub unsafe extern "system" fn mouse_proc(n_code: i32, w_param: WPARAM, l_param: 
         // WM_MOUSEWHEEL 路由到下层有焦点的窗口，导致滚轮“穿透”到背后的其他应用。
         // 当光标悬停在 Magpie 窗口矩形内时，将滚轮消息直接投递给光标正下方的窗口
         // （即 Magpie 的 webview 子窗口），并吞掉原始事件，确保滚动作用于 Magpie 自身、不穿透。
-        if msg == WM_MOUSEWHEEL && WINDOW_PINNED.load(Ordering::Relaxed) {
+        // 注意：这里不再限定 pinned 模式。非固定模式同样走 show_window_no_activate 且带
+        // WS_EX_NOACTIVATE，窗口一样没有键盘焦点，滚轮穿透的成因完全相同——只修一半会让
+        // 非固定模式的用户继续遇到穿透。
+        if (msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL) && !IS_HIDDEN.load(Ordering::Relaxed) {
             if let Some(handle) = GLOBAL_APP_HANDLE.get() {
                 if let Some(window) = handle.get_webview_window("main") {
                     if let Ok(hwnd_raw) = window.hwnd() {
@@ -549,19 +592,28 @@ pub unsafe extern "system" fn mouse_proc(n_code: i32, w_param: WPARAM, l_param: 
                                 let target = WindowFromPoint(point);
                                 // 仅当该窗口的根祖先为 Magpie 主窗口时才转发，避免误投递到其他应用
                                 if !target.0.is_null() && GetAncestor(target, GA_ROOT) == main_hwnd {
-                                    // 重建 WM_MOUSEWHEEL 参数：
-                                    // wParam 高字为滚轮增量、低字为按键修饰标志（此处置 0）；
+                                    // 重建滚轮参数：
+                                    // wParam 高字为滚轮增量、低字为按键修饰标志；
                                     // lParam 低字为屏幕坐标 x、高字为屏幕坐标 y。
+                                    // MSLLHOOKSTRUCT 不带按键状态，需自行补齐 MK_* 标志，
+                                    // 否则 Ctrl+滚轮 / Shift+滚轮 的语义会在转发中丢失。
                                     let wheel_delta = (mouse_struct.mouseData >> 16) as i16;
-                                    let wparam =
-                                        WPARAM(((wheel_delta as u16 as u32) << 16) as usize);
+                                    let mut modifiers = 0u32;
+                                    if GetAsyncKeyState(VK_CONTROL.0 as i32) < 0 {
+                                        modifiers |= MK_CONTROL.0;
+                                    }
+                                    if GetAsyncKeyState(VK_SHIFT.0 as i32) < 0 {
+                                        modifiers |= MK_SHIFT.0;
+                                    }
+                                    let wparam = WPARAM(
+                                        (((wheel_delta as u16 as u32) << 16) | modifiers) as usize,
+                                    );
                                     let lparam = LPARAM(
                                         ((((point.y as u32) & 0xFFFF) << 16)
                                             | ((point.x as u32) & 0xFFFF))
                                             as i32 as isize,
                                     );
-                                    let _ =
-                                        PostMessageW(Some(target), WM_MOUSEWHEEL, wparam, lparam);
+                                    let _ = PostMessageW(Some(target), msg, wparam, lparam);
                                     // 吞掉原始滚轮事件，阻止穿透到下层应用
                                     return LRESULT(1);
                                 }

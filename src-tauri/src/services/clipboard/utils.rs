@@ -422,7 +422,18 @@ fn collapse_line_whitespace(text: &str) -> String {
 
     WHITESPACE_RE
         .get_or_init(|| Regex::new(r"[^\S\r\n]+").unwrap())
-        .replace_all(text.trim(), " ")
+        // Collapse runs of horizontal whitespace, but preserve tabs: table cells are
+        // separated by tabs, and turning them into spaces would merge a spreadsheet row's
+        // columns together. The tab count is kept because consecutive tabs denote empty
+        // cells — collapsing them to one would shift every later column left.
+        .replace_all(text.trim(), |caps: &regex::Captures| {
+            let tabs = caps[0].matches('\t').count();
+            if tabs > 0 {
+                "\t".repeat(tabs)
+            } else {
+                " ".to_string()
+            }
+        })
         .trim()
         .to_string()
 }
@@ -690,6 +701,7 @@ fn sanitize_rich_text_plain_text(text: &str) -> String {
 }
 
 fn extract_plain_text_from_htmlish(text: &str) -> String {
+    static CELL_TAG_RE: OnceLock<Regex> = OnceLock::new();
     static BREAK_TAG_RE: OnceLock<Regex> = OnceLock::new();
     static TAG_RE: OnceLock<Regex> = OnceLock::new();
 
@@ -697,18 +709,40 @@ fn extract_plain_text_from_htmlish(text: &str) -> String {
     if repaired.is_empty() {
         return String::new();
     }
+
+    // Cells become tab-separated so a multi-column copy keeps its shape instead of one
+    // column per line.
+    let with_cells = CELL_TAG_RE
+        .get_or_init(|| Regex::new(r"(?is)</(?:td|th)\s*>").unwrap())
+        .replace_all(&repaired, "\t");
+
+    // Break on both opening and closing block tags: HTML5 lets `</li>` and `</p>` be omitted,
+    // so keying only off closing tags would run `<ul><li>a<li>b</ul>` together on one line.
+    // The resulting empty lines are dropped below rather than kept, which is what fixes the
+    // blank line that used to appear between every table row.
     let with_breaks = BREAK_TAG_RE
         .get_or_init(|| {
             Regex::new(
-                r"(?is)</?(?:br|p|div|li|tr|td|th|table|h[1-6]|section|article|ul|ol)\b[^>]*>",
+                // No td/th here: cell boundaries became tabs above, and turning them into
+                // line breaks would put every column of a row on its own line.
+                r"(?is)</?(?:br|p|div|li|tr|table|h[1-6]|section|article|ul|ol)\b[^>]*>",
             )
             .unwrap()
         })
-        .replace_all(&repaired, "\n");
+        .replace_all(with_cells.as_ref(), "\n");
     let without_tags = TAG_RE
         .get_or_init(|| Regex::new(r"(?is)<[^>]+>").unwrap())
         .replace_all(with_breaks.as_ref(), " ");
     let collapsed = normalize_plain_text_layout(&decode_basic_html_entities(without_tags.as_ref()));
+    // Markup produces a blank line wherever one block element ends and the next begins, which
+    // is an artefact of the tag structure rather than content. Drop them: keeping even one
+    // (as normalize_plain_text_layout does for genuine plain text) is exactly what made a
+    // copied spreadsheet column paste back double-spaced.
+    let collapsed = collapsed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     let cleaned = strip_leading_office_metadata_text(&collapsed);
     if cleaned.is_empty() {
         return String::new();
@@ -893,6 +927,19 @@ pub fn infer_rich_html_from_plain_text(
     None
 }
 
+/// Compare two strings ignoring every whitespace difference (amount, kind and position).
+fn whitespace_insensitive_eq(a: &str, b: &str) -> bool {
+    let mut left = a.chars().filter(|c| !c.is_whitespace());
+    let mut right = b.chars().filter(|c| !c.is_whitespace());
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return true,
+            (x, y) if x != y => return false,
+            _ => {}
+        }
+    }
+}
+
 pub fn derive_rich_text_content(content: &str, html_content: Option<&str>) -> String {
     let sanitized_plain = sanitize_rich_text_plain_text(content);
     if looks_like_obsidian_callout_markdown(&sanitized_plain) {
@@ -903,6 +950,14 @@ pub fn derive_rich_text_content(content: &str, html_content: Option<&str>) -> St
         .map(extract_plain_text_from_htmlish)
         .filter(|text| !text.is_empty());
     if let Some(text) = html_text {
+        // The HTML-derived text is normalized (runs of spaces collapsed, every line
+        // trimmed). When it differs from the clipboard's own plain text by nothing but
+        // whitespace, the plain text is the faithful copy — prefer it so that trailing
+        // spaces survive a round trip. This result is stored *and* written back on paste,
+        // so losing them here would silently alter what the user copied.
+        if !content.is_empty() && whitespace_insensitive_eq(&text, content) {
+            return content.to_string();
+        }
         return text;
     }
 
@@ -1222,6 +1277,7 @@ mod tests {
         attach_rich_named_formats, build_entry_preview, collapse_preview_whitespace,
         derive_rich_text_content, extract_animated_image_data_url_from_html,
         extract_animated_image_data_url_from_text, extract_first_image_data_url_from_html,
+        extract_plain_text_from_htmlish,
         infer_rich_html_from_plain_text, normalize_clipboard_plain_text,
         parse_app_cleanup_policies, parse_cf_html, parse_cleanup_rules,
         split_rich_html_and_image_fallback, split_rich_html_and_named_formats,
@@ -1231,6 +1287,80 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn rich_text_capture_keeps_trailing_spaces() {
+        // The HTML-derived text trims each line, so copying "abc   " from a rich-text app
+        // used to store and paste back "abc". When the two differ only in whitespace, the
+        // clipboard's own plain text is the faithful one.
+        assert_eq!(
+            derive_rich_text_content("abc   ", Some("<p>abc</p>")),
+            "abc   "
+        );
+        assert_eq!(
+            derive_rich_text_content("  leading and trailing  ", Some("<p>leading and trailing</p>")),
+            "  leading and trailing  "
+        );
+    }
+
+    #[test]
+    fn rich_text_still_prefers_html_when_content_actually_differs() {
+        // Not just a whitespace difference: the HTML carries text the plain side lacks, so
+        // the derived version must win.
+        assert_eq!(
+            derive_rich_text_content("abc", Some("<p>abc def</p>")),
+            "abc def"
+        );
+    }
+
+    #[test]
+    fn spreadsheet_column_does_not_gain_blank_lines() {
+        // Regression guard: emitting a newline for both the opening and the closing block
+        // tag produced one blank line between every row, so copying an Excel column pasted
+        // back double-spaced.
+        let html = "<table><tr><td>A1</td></tr><tr><td>A2</td></tr><tr><td>A3</td></tr></table>";
+        assert_eq!(extract_plain_text_from_htmlish(html), "A1\nA2\nA3");
+    }
+
+    #[test]
+    fn spreadsheet_row_keeps_its_columns_on_one_line() {
+        let html = "<table><tr><td>A1</td><td>B1</td></tr><tr><td>A2</td><td>B2</td></tr></table>";
+        assert_eq!(extract_plain_text_from_htmlish(html), "A1\tB1\nA2\tB2");
+    }
+
+    #[test]
+    fn omitted_closing_tags_still_separate_lines() {
+        // HTML5 allows dropping </li> and </p>; keying line breaks off closing tags alone
+        // would run these together.
+        assert_eq!(
+            extract_plain_text_from_htmlish("<ul><li>a<li>b<li>c</ul>"),
+            "a\nb\nc"
+        );
+        assert_eq!(extract_plain_text_from_htmlish("text<p>para</p>"), "text\npara");
+    }
+
+    #[test]
+    fn empty_spreadsheet_cells_keep_their_column() {
+        // Consecutive tabs mean empty cells; collapsing them would shift later columns left.
+        let html = "<table><tr><td>A1</td><td></td><td>C1</td></tr></table>";
+        assert_eq!(extract_plain_text_from_htmlish(html), "A1\t\tC1");
+    }
+
+    #[test]
+    fn paragraphs_and_breaks_still_separate_lines() {
+        assert_eq!(
+            extract_plain_text_from_htmlish("<p>one</p><p>two</p>"),
+            "one\ntwo"
+        );
+        assert_eq!(
+            extract_plain_text_from_htmlish("first<br>second"),
+            "first\nsecond"
+        );
+        assert_eq!(
+            extract_plain_text_from_htmlish("<div>a</div><div>b</div>"),
+            "a\nb"
+        );
+    }
 
     fn create_test_png_file(name: &str) -> PathBuf {
         let unique = SystemTime::now()

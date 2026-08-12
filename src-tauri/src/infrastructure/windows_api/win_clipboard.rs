@@ -17,6 +17,25 @@ unsafe fn free_unowned_global(h: HGLOBAL) {
     let _ = GlobalFree(Some(h));
 }
 
+/// `OpenClipboard` fails while another process holds the clipboard, which is routine right
+/// after a copy: the source app is often still finishing its own work. Give it a few short
+/// tries instead of failing immediately — an immediate failure used to bubble up and make
+/// the caller retry its *entire* capture pipeline, multiplying the contention it was losing.
+unsafe fn open_clipboard_with_retry() -> bool {
+    // Kept to a small total budget (~60ms): this runs on paths reachable from async commands,
+    // so a long stall would both block a runtime worker and delay pasting.
+    const ATTEMPTS: usize = 6;
+    for attempt in 0..ATTEMPTS {
+        if OpenClipboard(None).is_ok() {
+            return true;
+        }
+        if attempt + 1 < ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(4 + attempt as u64 * 3));
+        }
+    }
+    false
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct BITMAPINFOHEADER {
@@ -502,7 +521,15 @@ pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
     let buffer_size = buffer.len() * 2;
     let total_size = dropfiles_size + buffer_size;
 
-    let h_global = GlobalAlloc(GHND, total_size).map_err(|e| e.to_string())?;
+    // No `?` here: an early return would skip CloseClipboard below and leave the clipboard
+    // owned by this process until it exits, freezing copy/paste system-wide.
+    let h_global = match GlobalAlloc(GHND, total_size) {
+        Ok(handle) => handle,
+        Err(e) => {
+            let _ = CloseClipboard();
+            return Err(e.to_string());
+        }
+    };
 
     let p_mem = GlobalLock(h_global);
     if p_mem.is_null() {
@@ -585,12 +612,20 @@ pub unsafe fn get_clipboard_raw_format(format_name: &str) -> Option<Vec<u8>> {
 }
 
 /// Enumerate registered clipboard formats with HGLOBAL-backed payloads.
+///
+/// `keep` decides, from the format's name alone, whether we want it. It is consulted
+/// **before** `GetClipboardData`, and that ordering is the whole point: for OLE delayed-
+/// rendering formats (`Embed Source`, `Object Descriptor`, `Native`, …) requesting the data
+/// makes Windows synchronously ask the *owning application* to render it. Asking WPS to
+/// serialize an embedded document that way crashes it. Filtering after the fact — as this
+/// used to — still paid that cost on every format before throwing the result away.
 pub unsafe fn get_named_clipboard_formats(
     max_formats: usize,
     max_format_bytes: usize,
     max_total_bytes: usize,
+    keep: &dyn Fn(&str) -> bool,
 ) -> Vec<NamedClipboardFormat> {
-    if OpenClipboard(None).is_err() {
+    if !open_clipboard_with_retry() {
         return Vec::new();
     }
 
@@ -608,6 +643,10 @@ pub unsafe fn get_named_clipboard_formats(
             let Some(name) = clipboard_format_name(current_id) else {
                 continue;
             };
+
+            if !keep(&name) {
+                continue;
+            }
 
             let h_data = match GetClipboardData(current_id) {
                 Ok(handle) => handle,

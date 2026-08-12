@@ -6,9 +6,27 @@ use std::sync::{Arc, Mutex};
 
 const LEGACY_PLAIN_PREFIX: &str = "plain:";
 
+/// Outcome of reading a value that may be encrypted at rest.
+///
+/// Exists because collapsing `Unreadable` into "empty" is dangerous for secrets: a caller
+/// then tells the user nothing is configured, the user supplies a *new* value, and whatever
+/// the old one protected becomes unrecoverable. That is exactly how a still-valid E2E
+/// passphrase gets replaced after the DPAPI master key changes (OS reinstall, moved profile).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretState {
+    /// No row, or the stored value is empty.
+    Missing,
+    /// Ciphertext is present but this machine can no longer decrypt it.
+    Unreadable,
+    Value(String),
+}
+
 pub trait SettingsRepository {
     fn set(&self, key: &str, value: &str) -> Result<()>;
     fn get(&self, key: &str) -> Result<Option<String>>;
+    /// Like [`SettingsRepository::get`], but distinguishes "not set" from "stored but
+    /// undecryptable on this machine". Use for secrets whose loss is unrecoverable.
+    fn get_secret(&self, key: &str) -> Result<SecretState>;
     fn get_all(&self) -> Result<HashMap<String, String>>;
     fn clear(&self) -> Result<()>;
 }
@@ -168,6 +186,36 @@ impl SettingsRepository for SqliteSettingsRepository {
         }
     }
 
+    fn get_secret(&self, key: &str) -> Result<SecretState> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?")?;
+        let mut rows = stmt.query(params![key])?;
+
+        let Some(row) = rows.next()? else {
+            return Ok(SecretState::Missing);
+        };
+        let value: String = row.get(0)?;
+
+        if let Some(decrypted) = Self::try_decrypt_legacy_or_sensitive(key, &value) {
+            return Ok(if decrypted.is_empty() {
+                SecretState::Missing
+            } else {
+                SecretState::Value(decrypted)
+            });
+        }
+        // Ciphertext we could not open. Deliberately NOT reported as Missing: the stored
+        // bytes are still on disk and may become readable again (e.g. restoring the original
+        // Windows account), so the caller must ask for the original secret, not a new one.
+        if Self::should_try_decrypt(key, &value) {
+            return Ok(SecretState::Unreadable);
+        }
+        Ok(if value.is_empty() {
+            SecretState::Missing
+        } else {
+            SecretState::Value(value)
+        })
+    }
+
     fn get_all(&self) -> Result<HashMap<String, String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
@@ -210,5 +258,62 @@ impl SettingsRepository for SqliteSettingsRepository {
         conn.execute("DELETE FROM settings", [])?;
         // Note: seed_defaults should probably be called by the caller or we move it here
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo_with(rows: &[(&str, &str)]) -> SqliteSettingsRepository {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute(
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            [],
+        )
+        .expect("create table");
+        for (key, value) in rows {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?)",
+                params![key, value],
+            )
+            .expect("insert");
+        }
+        SqliteSettingsRepository::new(Arc::new(Mutex::new(conn)))
+    }
+
+    const SECRET_KEY: &str = "cloud_sync_e2e_passphrase";
+
+    #[test]
+    fn absent_secret_reads_as_missing() {
+        let repo = repo_with(&[]);
+        assert_eq!(repo.get_secret(SECRET_KEY).unwrap(), SecretState::Missing);
+        assert_eq!(repo.get_secret("cloud_sync_e2e_salt").unwrap(), SecretState::Missing);
+    }
+
+    #[test]
+    fn empty_secret_reads_as_missing() {
+        let repo = repo_with(&[(SECRET_KEY, "")]);
+        assert_eq!(repo.get_secret(SECRET_KEY).unwrap(), SecretState::Missing);
+    }
+
+    #[test]
+    fn undecryptable_secret_is_not_reported_as_missing() {
+        // Regression guard: a stored-but-unopenable secret must never look "unset". If it
+        // did, the caller would prompt for a new E2E passphrase and silently strand every
+        // ciphertext already uploaded under the old one.
+        let repo = repo_with(&[(SECRET_KEY, "dpapi:!!!not-valid-base64!!!")]);
+        let state = repo.get_secret(SECRET_KEY).unwrap();
+        assert_eq!(state, SecretState::Unreadable);
+        assert_ne!(state, SecretState::Missing);
+    }
+
+    #[test]
+    fn plaintext_non_sensitive_value_reads_through() {
+        let repo = repo_with(&[("app.language", "zh")]);
+        assert_eq!(
+            repo.get_secret("app.language").unwrap(),
+            SecretState::Value("zh".to_string())
+        );
     }
 }

@@ -57,6 +57,13 @@ pub fn normalize_anon_id(id: &str) -> Option<String> {
 }
 
 pub fn is_same_device_id(id1: &str, id2: &str) -> bool {
+    // Reflexive first: normalize_anon_id only recognises the hex-prefixed form and returns
+    // None for anything else, which would otherwise make an id compare unequal to itself.
+    // Callers now discard batches whose device id doesn't match, so that would silently drop
+    // data if the id format ever changes.
+    if !id1.is_empty() && id1 == id2 {
+        return true;
+    }
     let n1 = normalize_anon_id(id1);
     let n2 = normalize_anon_id(id2);
     n1.is_some() && n1 == n2
@@ -94,4 +101,27 @@ pub unsafe extern "system" fn tray_subclass_proc(
         }
     }
     DefSubclassProc(hwnd, msg, wparam, lparam)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_same_device_id;
+
+    #[test]
+    fn device_id_matching_is_reflexive_for_any_format() {
+        // Callers now drop batches whose device id does not match, so an id must always
+        // equal itself even when it is not in the recognised hex-prefixed form.
+        assert!(is_same_device_id("a1b2c3d4", "a1b2c3d4"));
+        assert!(is_same_device_id("not-a-hex-id", "not-a-hex-id"));
+        assert!(!is_same_device_id("", ""));
+    }
+
+    #[test]
+    fn long_and_short_forms_of_the_same_id_match() {
+        assert!(is_same_device_id(
+            "a1b2c3d4-1111-2222-3333-444444444444",
+            "a1b2c3d4"
+        ));
+        assert!(!is_same_device_id("a1b2c3d4", "b9b8b7b6"));
+    }
 }

@@ -1231,11 +1231,28 @@ fn setup_tray(app: &App, hide_tray: bool) {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
-    let show_i = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>).unwrap();
-    let quit_i = MenuItem::with_id(app, "quit", "退出 喜鹊", true, None::<&str>).unwrap();
-    let menu = Menu::with_items(app, &[&show_i, &quit_i]).unwrap();
-    let icon =
-        tauri::image::Image::from_bytes(include_bytes!("../../icons/tray-icon.png")).unwrap();
+    // Degrade gracefully rather than abort: under `panic = "abort"` any unwrap here kills the
+    // process during startup, and the user is left with no tray icon and no window — the
+    // "reinstall to fix" symptom. A missing tray is bad; a dead app is worse.
+    let (show_i, quit_i) = match (
+        MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>),
+        MenuItem::with_id(app, "quit", "退出 喜鹊", true, None::<&str>),
+    ) {
+        (Ok(show), Ok(quit)) => (show, quit),
+        _ => {
+            crate::error!("[TRAY] failed to build tray menu items; continuing without a tray");
+            return;
+        }
+    };
+    let Ok(menu) = Menu::with_items(app, &[&show_i, &quit_i]) else {
+        crate::error!("[TRAY] failed to build tray menu; continuing without a tray");
+        return;
+    };
+    let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../../icons/tray-icon.png"))
+    else {
+        crate::error!("[TRAY] failed to decode tray icon; continuing without a tray");
+        return;
+    };
 
     let tray = TrayIconBuilder::with_id("main_tray")
         .icon(icon)
