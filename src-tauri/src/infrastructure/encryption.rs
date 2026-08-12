@@ -270,10 +270,16 @@ pub fn encrypt_value(plain: &str) -> Option<String> {
     // value as-is, because refusing to store it would lose user input outright — but that is a
     // silent downgrade of a value the app promised to protect, so say so loudly.
     let Some(key) = portable_key() else {
-        crate::error!(
-            "[SECURITY] at-rest encryption key unavailable; a sensitive value is being stored \
-             unencrypted. Check permissions on local.key in the data folder."
-        );
+        // Once per process. This is reached from the history list's hot path (three times per
+        // entry), and the condition never self-heals within a run, so logging every time would
+        // fill the log file — which has no rotation — during a single scroll.
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            crate::error!(
+                "[SECURITY] at-rest encryption key unavailable; sensitive values are being \
+                 stored unencrypted. Check permissions on local.key in the data folder."
+            );
+        });
         return None;
     };
     let cipher = XChaCha20Poly1305::new_from_slice(&key).ok()?;

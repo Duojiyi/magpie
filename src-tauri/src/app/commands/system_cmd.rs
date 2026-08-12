@@ -653,6 +653,63 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
 
     let old_path_buf = app_handle.state::<AppDataDir>().0.lock().unwrap().clone();
 
+    // Selecting the folder we already use would move files onto themselves: the database gets
+    // renamed to clipboard.db.backup, the follow-up move then fails because the source is gone,
+    // and we bail out with the data left under a name the app never opens.
+    if old_path_buf == new_data_path {
+        return Ok(());
+    }
+
+    // 0. Pre-flight: carry the at-rest encryption key across FIRST.
+    //
+    // Off Windows, sensitive values (API keys, MQTT credentials, the cloud-sync E2E passphrase,
+    // entries tagged sensitive) are encrypted with a key stored beside the database. Two things
+    // must hold, and both have to be settled before anything moves:
+    //
+    // - The key has to travel with the data. Without it the destination holds ciphertext and no
+    //   key, the next start mints a fresh one, and every encrypted value is lost for good.
+    // - If the destination already has a *different* key, it belongs to another encrypted data
+    //   set (restoring a backup folder, pointing back at a previous install). Merging our
+    //   database into it would leave our ciphertext unreadable, so refuse outright.
+    //
+    // Doing this first means a failure here leaves the old folder completely intact, instead of
+    // aborting midway with the database already moved and datapath.txt still pointing at the
+    // now-empty original.
+    let old_key = old_path_buf.join("local.key");
+    let new_key = new_data_path.join("local.key");
+    if old_key.exists() {
+        let old_key_bytes = std::fs::read(&old_key).map_err(|e| {
+            AppError::Internal(format!("Failed to read the encryption key: {}", e))
+        })?;
+        if new_key.exists() {
+            let new_key_bytes = std::fs::read(&new_key).unwrap_or_default();
+            if new_key_bytes != old_key_bytes {
+                return Err(AppError::Validation(
+                    "The target folder already contains a different encryption key, so it \
+                     belongs to another encrypted data set. Moving here would make the current \
+                     data permanently unreadable. Nothing has been moved; choose an empty \
+                     folder instead."
+                        .to_string(),
+                ));
+            }
+        } else {
+            // Copy, not move: the source folder keeps a usable key as a fallback.
+            std::fs::copy(&old_key, &new_key).map_err(|e| {
+                AppError::Internal(format!(
+                    "Failed to copy the encryption key to the new folder ({}). \
+                     Nothing has been moved.",
+                    e
+                ))
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ =
+                    std::fs::set_permissions(&new_key, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+
     // 1. Migrate data folders if they exist in the OLD path
     {
         for folder in ["attachments", "emoji_favorites"] {
@@ -720,31 +777,6 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
             }
         }
 
-        // 1.2b Carry the at-rest encryption key across with the database.
-        //
-        // Off Windows, sensitive values (API keys, MQTT credentials, the cloud-sync E2E
-        // passphrase, entries tagged sensitive) are encrypted with a key stored beside the
-        // database. Leaving it behind means the new location has ciphertext and no key: the
-        // app would mint a fresh key on next start and every one of those values becomes
-        // permanently unreadable. Copy rather than move, so the old directory keeps a usable
-        // fallback, and never clobber a key that already exists at the destination — that one
-        // may be protecting data already there.
-        let old_key = old_path_buf.join("local.key");
-        let new_key = new_data_path.join("local.key");
-        if old_key.exists() && !new_key.exists() {
-            if let Err(err) = std::fs::copy(&old_key, &new_key) {
-                return Err(AppError::Internal(format!(
-                    "Failed to copy the encryption key to the new data folder ({}). \
-                     Migration aborted so encrypted values stay readable.",
-                    err
-                )));
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&new_key, std::fs::Permissions::from_mode(0o600));
-            }
-        }
     }
 
     // 1.3 Rewrite internal attachment paths inside DB (if DB exists in new path)

@@ -231,16 +231,26 @@ fn clipboard_offers(format: &str) -> bool {
 
     if cache.as_ref().map(|(cached, _)| *cached) != Some(seq) {
         let Ok(ctx) = ctx() else {
-            return false;
+            return true;
         };
-        let formats = ctx.available_formats().unwrap_or_default();
-        *cache = Some((seq, formats));
+        match ctx.available_formats() {
+            // Do not cache a failure as "there are no formats": enumerating targets is a
+            // round trip that can time out while the source app is busy, and pinning that
+            // answer for the rest of this clipboard generation would disable every probe
+            // that consults it.
+            Err(_) => return true,
+            Ok(formats) => *cache = Some((seq, formats)),
+        }
     }
 
     cache
         .as_ref()
-        .map(|(_, formats)| formats.iter().any(|f| f.eq_ignore_ascii_case(format)))
-        .unwrap_or(false)
+        .map(|(_, formats)| {
+            // An empty list means we could not learn anything, not that the clipboard is
+            // empty. Let the caller try the real read, which validates what it gets.
+            formats.is_empty() || formats.iter().any(|f| f.eq_ignore_ascii_case(format))
+        })
+        .unwrap_or(true)
 }
 
 /// Read a clipboard format by its *Windows* name, translating to what this platform offers.
@@ -382,7 +392,12 @@ pub fn get_named_formats(
             let Ok(ctx) = ctx() else {
                 return Vec::new();
             };
-            *cache = Some((seq, ctx.available_formats().unwrap_or_default()));
+            // As in clipboard_offers: a failed enumeration is not "no formats", so don't
+            // record it. There is nothing to preserve this round, but the next probe retries.
+            match ctx.available_formats() {
+                Err(_) => return Vec::new(),
+                Ok(formats) => *cache = Some((seq, formats)),
+            }
         }
         match cache.as_ref() {
             Some((_, formats)) => formats.clone(),
