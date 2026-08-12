@@ -395,7 +395,11 @@ const App = () => {
 
   const t = useCallback((key: string) => {
     const k = key as keyof typeof translations['zh'];
-    return translations[language][k] || translations['en'][k] || key;
+    // Defense-in-depth for audit P1-7: even if `language` is somehow not a real table
+    // (bad persisted/synced value that slipped past normalizeLocale), never index into
+    // `undefined` — fall back to zh, then en, then the raw key.
+    const table = translations[language] ?? translations['zh'];
+    return table[k] || translations['en'][k] || key;
   }, [language]);
 
   const { handleListScroll: handleSearchScroll, handleMainWheel } = useSearchScroll({
@@ -692,6 +696,25 @@ const App = () => {
     setSearchIsFocused,
     searchInputRef
   ]);
+
+  // Reset transient filter/search state once the window is actually hidden
+  // (emitted by the backend from every hide path: hotkey toggle, blur auto-hide,
+  // Escape/hide_window_cmd, close-to-tray). The webview never unmounts on hide,
+  // so without this the previous type/tag filter and search term silently carry
+  // over to the next time the window is shown (upstream #142).
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    const unlisten = listen("window-hidden", () => {
+      setTypeFilter(null);
+      setShowTagFilter(false);
+      setSearch("");
+    });
+
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [setTypeFilter, setShowTagFilter, setSearch]);
 
   useEffect(() => {
     if (!emojiPanelEnabled && showEmojiPanel) {

@@ -1422,16 +1422,23 @@ fn apply_remote_changes(
                 rusqlite::params![item.content_type, remote_hash, tombstone_ts],
             );
 
+            // Only delete local rows that are at least as old as the tombstone. A local
+            // row newer than `tombstone_ts` means the same content was re-copied on this
+            // (or another) device *after* the remote deletion happened; deleting it here
+            // would cause content to ping-pong away permanently between devices instead of
+            // being kept as a fresh entry (P0: cross-device deletes silently dropping newer
+            // local copies).
             let mut stmt = conn
                 .prepare(
                     "SELECT id FROM clipboard_history
-                     WHERE content_type = ?1 AND content_hash = ?2",
+                     WHERE content_type = ?1 AND content_hash = ?2 AND timestamp <= ?3",
                 )
                 .map_err(|e| AppError::Internal(e.to_string()))?;
             let rows = stmt
-                .query_map(rusqlite::params![item.content_type, remote_hash], |row| {
-                    row.get::<_, i64>(0)
-                })
+                .query_map(
+                    rusqlite::params![item.content_type, remote_hash, tombstone_ts],
+                    |row| row.get::<_, i64>(0),
+                )
                 .map_err(|e| AppError::Internal(e.to_string()))?;
             for row in rows {
                 let id = row.map_err(|e| AppError::Internal(e.to_string()))?;

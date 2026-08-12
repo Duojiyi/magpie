@@ -32,22 +32,28 @@ pub fn toggle_clipboard_pin(
     is_pinned: bool,
 ) -> AppResult<i64> {
     let mut real_id = id;
-    let mut entry_to_save = None;
 
-    {
-        let mut session_items = session.inner().0.lock().unwrap();
-        if let Some(item) = session_items.iter_mut().find(|i| i.id == id) {
-            item.is_pinned = is_pinned;
-            if id < 0 && is_pinned {
-                entry_to_save = Some(item.clone());
-            }
+    // Canonical lock order app_data_dir -> conn -> session, held across the whole promote:
+    //   * data_dir is snapshotted first (clone + release) so app_data_dir is never held
+    //     while conn is held — otherwise it cycles with history/clear commands that hold
+    //     app_data_dir before locking conn (conn<->app_data_dir AB-BA).
+    //   * conn is acquired before session (matches update_tags / the capture pipeline).
+    //   * both are held across save_with_conn so this promotion is serialized with
+    //     update_tags (no double-insert of the same session item / lost tags).
+    let data_dir = app_data_dir.0.lock().unwrap().clone();
+    let conn = state.conn.lock().unwrap();
+    let mut session_items = session.inner().0.lock().unwrap();
+
+    let mut promote_index = None;
+    if let Some(index) = session_items.iter().position(|i| i.id == id) {
+        session_items[index].is_pinned = is_pinned;
+        if id < 0 && is_pinned {
+            promote_index = Some(index);
         }
     }
 
-    let conn = state.conn.lock().unwrap();
-
-    if let Some(entry) = entry_to_save {
-        let data_dir = app_data_dir.0.lock().unwrap().clone();
+    if let Some(index) = promote_index {
+        let entry = session_items[index].clone();
         if let Ok(new_id) = state.repo.save_with_conn(&conn, &entry, Some(&data_dir)) {
             real_id = new_id;
             if let Ok(deleted_ids) = state.repo.enforce_limit_with_conn(&conn, Some(&data_dir)) {
@@ -55,12 +61,7 @@ pub fn toggle_clipboard_pin(
                     let _ = app_handle.emit("clipboard-removed", deleted_id);
                 }
             }
-            {
-                let mut session_items = session.inner().0.lock().unwrap();
-                if let Some(item) = session_items.iter_mut().find(|i| i.id == id) {
-                    item.id = new_id;
-                }
-            }
+            session_items[index].id = new_id;
         }
     }
 
@@ -70,6 +71,7 @@ pub fn toggle_clipboard_pin(
             .toggle_pin_with_conn(&conn, real_id, is_pinned)
             .map_err(AppError::from)?;
     }
+    drop(session_items);
     drop(conn);
     let _ = app_handle.emit("clipboard-changed", ());
     crate::services::cloud_sync::request_cloud_sync(app_handle);
@@ -86,20 +88,27 @@ pub fn update_tags(
     tags: Vec<String>,
 ) -> AppResult<i64> {
     if id < 0 {
+        // Lock order app_data_dir -> conn -> session (matches toggle_clipboard_pin / the
+        // capture pipeline). Snapshot the data dir FIRST (clone + release) so app_data_dir
+        // is never held while conn is held — that would cycle with the history/clear
+        // commands which lock app_data_dir before conn (conn<->app_data_dir AB-BA). Then
+        // hold conn->session across the save to serialize this promotion (no double-insert
+        // / lost-tag race with toggle_clipboard_pin / update_item_content).
+        let data_dir = app_data_dir.0.lock().unwrap().clone();
+        let conn = state.conn.lock().unwrap();
         let mut session_items = session.inner().0.lock().unwrap();
-        if let Some(index) = session_items.iter().position(|item| item.id == id) {
-            let mut item = session_items[index].clone();
-            item.tags = tags.clone();
-
-            let data_dir = app_data_dir.0.lock().unwrap().clone();
-            let new_id = state.repo.save(&item, Some(&data_dir))?;
-
-            session_items[index].id = new_id;
-            session_items[index].tags = tags;
-            crate::services::cloud_sync::request_cloud_sync(app_handle);
-            return Ok(new_id);
-        }
-        return Err(AppError::Validation("Item not found".to_string()));
+        let Some(index) = session_items.iter().position(|item| item.id == id) else {
+            return Err(AppError::Validation("Item not found".to_string()));
+        };
+        let mut item = session_items[index].clone();
+        item.tags = tags.clone();
+        let new_id = state.repo.save_with_conn(&conn, &item, Some(&data_dir))?;
+        session_items[index].id = new_id;
+        session_items[index].tags = tags;
+        drop(session_items);
+        drop(conn);
+        crate::services::cloud_sync::request_cloud_sync(app_handle);
+        return Ok(new_id);
     }
 
     let old_sensitive = {

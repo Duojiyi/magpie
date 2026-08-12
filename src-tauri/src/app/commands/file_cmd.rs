@@ -232,6 +232,7 @@ pub(crate) async fn save_emoji_favorite_url_to_dir(
     }
 
     let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| AppError::Network(e.to_string()))?;

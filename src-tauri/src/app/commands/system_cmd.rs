@@ -702,6 +702,25 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
             }
         }
 
+        // Flush the write-ahead log into the main clipboard.db BEFORE moving it, so the
+        // file we copy/rename to the new location is self-contained. Without this, the
+        // still-open connection's uncheckpointed WAL stays behind at the old path and the
+        // migrated DB is missing the most recent entries (P0: data loss on data-dir change).
+        // The frontend relaunches immediately after this command returns, so the stale
+        // old-path connection does not keep diverging.
+        if let Some(db_state) = app_handle.try_state::<crate::database::DbState>() {
+            // Recover from a poisoned lock instead of silently skipping the flush (matches
+            // the clipboard monitor's poison handling); a skipped checkpoint here is the
+            // very P0 data-loss this guards against.
+            let conn = db_state
+                .conn
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+                eprintln!("[set_data_path] wal_checkpoint before migration failed: {e}");
+            }
+        }
+
         // 1.2 Migrate database files (main + WAL/SHM)
         let db_files = ["clipboard.db", "clipboard.db-wal", "clipboard.db-shm"];
         for name in db_files {

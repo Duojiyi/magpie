@@ -13,7 +13,10 @@ import type {
 import { DEFAULT_CLOUD_SYNC_CONTENT_PREFS } from "../types";
 import type { AiProfile, AppCleanupPolicy } from "../../settings/types";
 
-const DEFAULT_AI_KEY = import.meta.env.VITE_AI_DEFAULT_API_KEY ?? "";
+// Never source a default API key from a VITE_ env var: Vite inlines those into the
+// shipped JS bundle, so a real key would be extractable from any distributed build
+// (audit P1). A default key, if ever needed, must be provided by the Rust backend.
+const DEFAULT_AI_KEY = "";
 
 export const useAppState = (): AppState => {
   const [showSettings, setShowSettings] = useState(false);

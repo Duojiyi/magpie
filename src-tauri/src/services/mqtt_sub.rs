@@ -5,7 +5,7 @@ use crate::{error, info};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, Transport};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::time::sleep;
@@ -30,6 +30,25 @@ static MQTT_RUNNING: AtomicBool = AtomicBool::new(false);
 static MQTT_CONNECTED: AtomicBool = AtomicBool::new(false);
 static MQTT_RECONNECT_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 static MQTT_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Reject MQTT payloads larger than this before we allocate/hash/clone them. A hostile
+/// or misconfigured broker could otherwise push arbitrarily large messages and drive the
+/// client OOM (P1). 1 MiB comfortably covers text/rich-text clipboard sync.
+const MAX_MQTT_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+/// Count of in-flight clipboard-apply threads spawned from incoming MQTT messages, and
+/// their hard cap. Previously every message did `std::thread::spawn`, so a burst could
+/// spawn unbounded OS threads (P1 thread storm). Beyond the cap we drop the message.
+static MQTT_INFLIGHT_APPLIES: AtomicUsize = AtomicUsize::new(0);
+const MAX_MQTT_INFLIGHT_APPLIES: usize = 8;
+
+/// RAII guard that decrements `MQTT_INFLIGHT_APPLIES` when an apply thread finishes.
+struct MqttInflightGuard;
+impl Drop for MqttInflightGuard {
+    fn drop(&mut self) {
+        MQTT_INFLIGHT_APPLIES.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 struct MqttTaskGuard;
 
@@ -447,6 +466,13 @@ pub fn start_mqtt_client(app: AppHandle) {
                         Ok(event_result) => match event_result {
                             Ok(Event::Incoming(notification)) => match notification {
                                 Incoming::Publish(publish) => {
+                                    if publish.payload.len() > MAX_MQTT_PAYLOAD_BYTES {
+                                        error!(
+                                            ">>> [MQTT] Dropping oversized payload ({} bytes)",
+                                            publish.payload.len()
+                                        );
+                                        continue;
+                                    }
                                     if let Ok(payload_str) = std::str::from_utf8(&publish.payload) {
                                         let payload_trimmed = payload_str.trim();
                                         let final_content = if let Ok(json_val) =
@@ -476,7 +502,24 @@ pub fn start_mqtt_client(app: AppHandle) {
                                         let payload_owned = final_content.clone();
                                         let app_handle_for_clipboard = app.clone();
 
-                                        std::thread::spawn(move || {
+                                        // Surface the message to the UI regardless of whether
+                                        // we can apply it to the system clipboard below (the
+                                        // in-flight cap only limits apply threads, not UI).
+                                        let _ = app.emit("mqtt-message", &final_content);
+
+                                        // Bound how many clipboard-apply threads can run at
+                                        // once. Claim a slot; if we're at the cap, drop this
+                                        // message instead of spawning an unbounded thread.
+                                        if MQTT_INFLIGHT_APPLIES.fetch_add(1, Ordering::SeqCst)
+                                            >= MAX_MQTT_INFLIGHT_APPLIES
+                                        {
+                                            MQTT_INFLIGHT_APPLIES.fetch_sub(1, Ordering::SeqCst);
+                                            error!(">>> [MQTT] Too many in-flight applies; dropping message");
+                                            continue;
+                                        }
+
+                                        let apply = move || {
+                                            let _inflight = MqttInflightGuard;
                                             let normalized =
                                                 payload_owned.trim().replace("\r\n", "\n");
                                             let mut hasher = DefaultHasher::new();
@@ -516,9 +559,18 @@ pub fn start_mqtt_client(app: AppHandle) {
                                                 Some("mqtt".to_string()),
                                                 None,
                                             );
-                                        });
-
-                                        let _ = app.emit("mqtt-message", &final_content);
+                                        };
+                                        // Builder::spawn returns Err instead of panicking on
+                                        // thread-creation failure; under panic="abort" a panic
+                                        // here would kill the whole app. Release the reserved
+                                        // in-flight slot if the spawn fails.
+                                        if let Err(e) = std::thread::Builder::new()
+                                            .name("mqtt-apply".into())
+                                            .spawn(apply)
+                                        {
+                                            MQTT_INFLIGHT_APPLIES.fetch_sub(1, Ordering::SeqCst);
+                                            error!(">>> [MQTT] Failed to spawn apply thread: {}", e);
+                                        }
                                     }
                                 }
                                 Incoming::ConnAck(_) => {

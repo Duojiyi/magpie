@@ -495,7 +495,13 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
     // Start the native Windows listener
     crate::services::clipboard_listener::listen_clipboard(Arc::new(move || {
         let app = app_clone.clone();
-        let mut monitor_state = state_lock.lock().unwrap();
+        // Recover from poison instead of propagating it: this guard is held across the
+        // whole capture pipeline below (DB writes, image decode, hashing...), so a panic
+        // on any single clipboard event must not permanently kill every future capture
+        // by leaving this Mutex poisoned (P1: capture silently stops working).
+        let mut monitor_state = state_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // 1. Check for pause
         if crate::CLIPBOARD_MONITOR_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {

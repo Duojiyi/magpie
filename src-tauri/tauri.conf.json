@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Magpie",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "identifier": "app.magpie",
   "plugins": {
     "updater": {
@@ -41,7 +41,7 @@
     ],
     "macOSPrivateApi": true,
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob: http: https:; media-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; video-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: http: https:;",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob: http: https:; media-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; video-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'none'; connect-src 'self' ws: http: https:;",
       "assetProtocol": {
         "enable": true,
         "scope": [
@@ -85,24 +85,6 @@
             "core:app:default",
             "dialog:allow-open",
             "dialog:default",
-            "fs:default",
-            {
-              "identifier": "fs:allow-read",
-              "allow": [
-                {
-                  "path": "$HOME/**"
-                },
-                {
-                  "path": "$APPDATA/**"
-                },
-                {
-                  "path": "$APPLOCALDATA/**"
-                },
-                {
-                  "path": "$PROFILE/**"
-                }
-              ]
-            },
             {
               "identifier": "core:path:default",
               "allow": [

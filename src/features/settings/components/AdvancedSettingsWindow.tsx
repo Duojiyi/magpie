@@ -135,7 +135,9 @@ const AdvancedSettingsWindow = () => {
 
     const t = useCallback((key: string) => {
         const k = key as keyof typeof translations["zh"];
-        return translations[language][k] || translations["en"][k] || key;
+        // Defense-in-depth for audit P1-7: never index into an undefined table.
+        const table = translations[language] ?? translations["zh"];
+        return table[k] || translations["en"][k] || key;
     }, [language]);
 
     const settings = useSettingsInit({

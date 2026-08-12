@@ -47,16 +47,21 @@ fn quick_paste_index_from_vk(vk: u32) -> Option<usize> {
 
 #[cfg(target_os = "windows")]
 fn quick_paste_modifier_from_settings() -> String {
+    // try_state (not state): this runs on every keystroke via the global keyboard
+    // hook and must never panic - state::<T>() panics if SettingsState was ever
+    // unmanaged, which would kill the hook (or the whole process under
+    // panic = "abort") instead of just disabling this one feature.
     if let Some(handle) = GLOBAL_APP_HANDLE.get() {
-        let settings = handle.state::<SettingsState>();
-        // 可恢复：键盘钩子每次按键都会读取该设置，锁中毒时取回内部值即可，
-        // 不能让钩子回调 panic（panic 会破坏全局键盘钩子，使快捷键彻底失效）。
-        return settings
-            .quick_paste_modifier
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_else(|e| e.into_inner().clone())
-            .to_ascii_lowercase();
+        if let Some(settings) = handle.try_state::<SettingsState>() {
+            // 可恢复：键盘钩子每次按键都会读取该设置，锁中毒时取回内部值即可，
+            // 不能让钩子回调 panic（panic 会破坏全局键盘钩子，使快捷键彻底失效）。
+            return settings
+                .quick_paste_modifier
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_else(|e| e.into_inner().clone())
+                .to_ascii_lowercase();
+        }
     }
 
     "disabled".to_string()
@@ -347,11 +352,13 @@ pub unsafe extern "system" fn keyboard_proc(
             if vk == 0x56 && ctrl_down && !alt_down && !shift_down && !win_down {
                 if is_down {
                     if let Some(handle) = GLOBAL_APP_HANDLE.get() {
-                        let settings = handle.state::<SettingsState>();
-                        if settings.sound_enabled.load(Ordering::Relaxed) {
-                            std::thread::spawn(move || {
-                                let _ = handle.emit("play-sound", "paste");
-                            });
+                        // try_state: see comment on quick_paste_modifier_from_settings above.
+                        if let Some(settings) = handle.try_state::<SettingsState>() {
+                            if settings.sound_enabled.load(Ordering::Relaxed) {
+                                std::thread::spawn(move || {
+                                    let _ = handle.emit("play-sound", "paste");
+                                });
+                            }
                         }
                     }
                 }
@@ -434,9 +441,12 @@ pub unsafe extern "system" fn keyboard_proc(
             if IS_HIDDEN.load(Ordering::Relaxed) {
                 return CallNextHookEx(None, n_code, w_param, l_param);
             }
+            // try_state: see comment on quick_paste_modifier_from_settings above.
             let allow_navigation = if let Some(handle) = GLOBAL_APP_HANDLE.get() {
-                let settings = handle.state::<SettingsState>();
-                settings.arrow_key_selection.load(Ordering::Relaxed)
+                handle
+                    .try_state::<SettingsState>()
+                    .map(|settings| settings.arrow_key_selection.load(Ordering::Relaxed))
+                    .unwrap_or(true)
             } else {
                 true
             };

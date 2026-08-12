@@ -614,24 +614,60 @@ async fn copy_content_to_system_clipboard(
                                 .and_then(|data_url| resolve_rich_image_fallback_bytes(&data_url))
                         });
 
+                    // Write image (if any) + text + CF_HTML + named formats in a single
+                    // OpenClipboard/EmptyClipboard/CloseClipboard transaction instead of
+                    // up to 3 sequential ones: if a later step failed (or lost a race for
+                    // OpenClipboard to another process right after an earlier step had
+                    // already committed), the clipboard used to end up holding only the
+                    // image with no text/HTML - a partially-written paste (P1).
                     if let Some(bytes) = rich_image_bytes {
+                        let prepared = prepare_image_for_clipboard(bytes)?;
+                        crate::LAST_APP_SET_TIMESTAMP.store(current_time, Ordering::SeqCst);
+                        let PreparedClipboardImage {
+                            image_data,
+                            is_gif,
+                            gif_bytes,
+                            png_buf,
+                            pixel_hash,
+                            visual_hash,
+                            gif_hash,
+                            png_hash,
+                        } = prepared;
+
+                        let gif_temp_path = unsafe {
+                            crate::infrastructure::windows_api::win_clipboard::set_clipboard_rich_content(
+                                Some((
+                                    image_data,
+                                    is_gif.then(|| gif_bytes.as_slice()),
+                                    Some(png_buf.as_slice()),
+                                )),
+                                content,
+                                &cf_html,
+                                &preserved_named_formats,
+                            )
+                            .map_err(AppError::from)?
+                        };
+
                         let (primary_hash, secondary_hash, visual_hash) =
-                            copy_image_bytes_to_clipboard(bytes, current_time)?;
+                            clipboard_image_echo_hashes(
+                                pixel_hash,
+                                visual_hash,
+                                gif_hash,
+                                png_hash,
+                                gif_temp_path,
+                            );
                         crate::LAST_APP_SET_HASH.store(primary_hash, Ordering::SeqCst);
                         crate::LAST_APP_SET_HASH_ALT.store(secondary_hash, Ordering::SeqCst);
                         crate::LAST_APP_SET_IMAGE_VISUAL_HASH.store(visual_hash, Ordering::SeqCst);
-                        unsafe {
-                            crate::infrastructure::windows_api::win_clipboard::append_clipboard_text_and_html(content, &cf_html)
-                                    .map_err(AppError::from)?;
-                            crate::infrastructure::windows_api::win_clipboard::append_named_clipboard_formats(&preserved_named_formats)
-                                    .map_err(AppError::from)?;
-                        }
                     } else {
                         unsafe {
-                            crate::infrastructure::windows_api::win_clipboard::set_clipboard_text_and_html(content, &cf_html)
-                                .map_err(AppError::from)?;
-                            crate::infrastructure::windows_api::win_clipboard::append_named_clipboard_formats(&preserved_named_formats)
-                                .map_err(AppError::from)?;
+                            crate::infrastructure::windows_api::win_clipboard::set_clipboard_rich_content(
+                                None,
+                                content,
+                                &cf_html,
+                                &preserved_named_formats,
+                            )
+                            .map_err(AppError::from)?;
                         }
                     }
                 } else {
@@ -763,7 +799,29 @@ fn generate_cf_html(html: &str) -> String {
     );
     format!("{}{}", header, html_content)
 }
-fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult<(u64, u64, u64)> {
+fn hash_bytes<T: Hash>(value: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Decoded/re-encoded image payload plus the hashes callers need for the
+/// self-paste-echo guard (`LAST_APP_SET_HASH*`), computed once so both the
+/// image-only path (`copy_image_bytes_to_clipboard`) and the rich-text-with-inline-image
+/// path (in `copy_content_to_system_clipboard`) can share it. Pure computation - does
+/// not touch the clipboard.
+struct PreparedClipboardImage {
+    image_data: crate::infrastructure::windows_api::win_clipboard::ImageData,
+    is_gif: bool,
+    gif_bytes: Vec<u8>,
+    png_buf: Vec<u8>,
+    pixel_hash: u64,
+    visual_hash: u64,
+    gif_hash: Option<u64>,
+    png_hash: u64,
+}
+
+fn prepare_image_for_clipboard(bytes: Vec<u8>) -> AppResult<PreparedClipboardImage> {
     // Check if it's a GIF by magic number
     let is_gif = bytes.len() > 3 && &bytes[0..3] == b"GIF";
 
@@ -775,23 +833,10 @@ fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult
         (w, h, img.into_raw())
     };
 
-    crate::LAST_APP_SET_TIMESTAMP.store(current_time, Ordering::SeqCst);
-
-    let pixel_hash = {
-        let mut hasher = DefaultHasher::new();
-        raw_bytes.hash(&mut hasher);
-        hasher.finish()
-    };
+    let pixel_hash = hash_bytes(&raw_bytes);
     let visual_hash =
         calc_image_hash_from_rgba(width, height, &raw_bytes).unwrap_or(pixel_hash as i64) as u64;
-
-    let gif_hash = if is_gif {
-        let mut hasher = DefaultHasher::new();
-        bytes.hash(&mut hasher);
-        Some(hasher.finish())
-    } else {
-        None
-    };
+    let gif_hash = is_gif.then(|| hash_bytes(&bytes));
 
     // Prepare PNG data for better compatibility
     let mut png_buf: Vec<u8> = Vec::new();
@@ -802,36 +847,81 @@ fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult
         image::ImageFormat::Png,
     )
     .map_err(|e| AppError::Internal(format!("编码 PNG 失败: {}", e)))?;
+    let png_hash = hash_bytes(&png_buf);
 
-    let png_hash = {
-        let mut hasher = DefaultHasher::new();
-        png_buf.hash(&mut hasher);
-        hasher.finish()
-    };
+    Ok(PreparedClipboardImage {
+        image_data: crate::infrastructure::windows_api::win_clipboard::ImageData {
+            width: width as usize,
+            height: height as usize,
+            bytes: raw_bytes,
+        },
+        is_gif,
+        gif_bytes: bytes,
+        png_buf,
+        pixel_hash,
+        visual_hash,
+        gif_hash,
+        png_hash,
+    })
+}
+
+/// Given the optional CF_HDROP temp-file path a write returned (set only when a GIF
+/// was written), fold it together with the prepared image's hashes into the
+/// `(primary_hash, secondary_hash, visual_hash)` triple callers store into
+/// `LAST_APP_SET_HASH*` to recognize/ignore their own writes as paste echoes.
+fn clipboard_image_echo_hashes(
+    pixel_hash: u64,
+    visual_hash: u64,
+    gif_hash: Option<u64>,
+    png_hash: u64,
+    gif_temp_path: Option<String>,
+) -> (u64, u64, u64) {
+    match gif_temp_path {
+        Some(path) => {
+            // Also hash the temp path to prevent echo on CF_HDROP
+            let normalized = path.trim().replace("\r\n", "\n");
+            let path_hash = hash_bytes(&normalized);
+            (path_hash, gif_hash.unwrap_or(png_hash), visual_hash)
+        }
+        None => (gif_hash.unwrap_or(png_hash), pixel_hash, visual_hash),
+    }
+}
+
+fn copy_image_bytes_to_clipboard(bytes: Vec<u8>, current_time: u64) -> AppResult<(u64, u64, u64)> {
+    let prepared = prepare_image_for_clipboard(bytes)?;
+    crate::LAST_APP_SET_TIMESTAMP.store(current_time, Ordering::SeqCst);
+
+    let PreparedClipboardImage {
+        image_data,
+        is_gif,
+        gif_bytes,
+        png_buf,
+        pixel_hash,
+        visual_hash,
+        gif_hash,
+        png_hash,
+    } = prepared;
 
     let gif_temp_path = unsafe {
         crate::infrastructure::windows_api::win_clipboard::set_clipboard_image_with_formats(
-            crate::infrastructure::windows_api::win_clipboard::ImageData {
-                width: width as usize,
-                height: height as usize,
-                bytes: raw_bytes,
+            image_data,
+            if is_gif {
+                Some(gif_bytes.as_slice())
+            } else {
+                None
             },
-            if is_gif { Some(&bytes) } else { None },
             Some(&png_buf),
         )
         .map_err(AppError::from)?
     };
 
-    if let Some(path) = gif_temp_path {
-        // Also hash the temp path to prevent echo on CF_HDROP
-        let normalized = path.trim().replace("\r\n", "\n");
-        let mut hasher = DefaultHasher::new();
-        normalized.hash(&mut hasher);
-        let path_hash = hasher.finish();
-        return Ok((path_hash, gif_hash.unwrap_or(png_hash), visual_hash));
-    }
-
-    Ok((gif_hash.unwrap_or(png_hash), pixel_hash, visual_hash))
+    Ok(clipboard_image_echo_hashes(
+        pixel_hash,
+        visual_hash,
+        gif_hash,
+        png_hash,
+        gif_temp_path,
+    ))
 }
 
 async fn copy_text_with_retry(content: &str) -> AppResult<()> {

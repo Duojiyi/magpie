@@ -787,7 +787,7 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             if (msgType === 'image' || (content.match(/\.(jpg|jpeg|png|gif|webp)$/i) && file_path)) {{
                 const useContent = content.startsWith('data:') || content.startsWith('/download/') || content.startsWith('http');
                 const src = escapeHTML(useContent ? content : (file_path || content));
-                bubbleContent = `<img src="${{src}}" class="img-preview" onclick="openOverlay('${{src}}')">`;
+                bubbleContent = `<img src="${{src}}" class="img-preview" onclick="openOverlay(this.src)">`;
             }} else if (msgType === 'video') {{
                 const useContent = content.startsWith('/download/') || content.startsWith('http');
                 const src = escapeHTML(useContent ? content : (file_path || content));

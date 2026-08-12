@@ -18,15 +18,28 @@ export function useAnnouncements() {
   const dismissAnnouncement = (id: string, forever: boolean = true) => {
     setAnnouncements((prev) => prev.filter((a) => a.id !== id));
     if (forever) {
-      const dismissed = JSON.parse(
-        localStorage.getItem("dismissed_announcements") || "[]"
-      );
+      // Corrupt/non-array localStorage must not throw out of dismiss (P2).
+      let dismissed: string[] = [];
+      try {
+        const parsed = JSON.parse(
+          localStorage.getItem("dismissed_announcements") || "[]"
+        );
+        if (Array.isArray(parsed)) {
+          dismissed = parsed.filter((x): x is string => typeof x === "string");
+        }
+      } catch {
+        dismissed = [];
+      }
       if (!dismissed.includes(id)) {
         dismissed.push(id);
-        localStorage.setItem(
-          "dismissed_announcements",
-          JSON.stringify(dismissed)
-        );
+        try {
+          localStorage.setItem(
+            "dismissed_announcements",
+            JSON.stringify(dismissed)
+          );
+        } catch {
+          // ignore storage write failures (quota, etc.)
+        }
       }
     }
   };

@@ -1,10 +1,24 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import { toTauriLocalImageSrc } from "../lib/localImageSrc";
 import {
   isHtmlishTagText,
   isOfficeStyleDefinitionText,
   stripOfficePreviewNoise
 } from "../lib/repairHtmlFragment";
+
+// Clipboard HTML comes from arbitrary, untrusted sources (any web page / app the
+// user copied from). DOMPurify runs as a final hard gate after our own DOM
+// clean-up below: it strips <iframe>/<object>/<embed>/<form>/<base> (including
+// srcdoc-based script execution) and any on*/javascript: vectors we might miss,
+// which the previous hand-rolled sanitizer did not cover.
+const FORBID_TAGS = ["iframe", "object", "embed", "form", "base", "link", "meta", "svg", "math"];
+const FORBID_ATTR = ["srcdoc", "formaction", "xlink:href"];
+// Extend DOMPurify's default scheme allowlist (http/https/mailto/tel/...) with the
+// custom schemes Tauri uses to serve local files, so legitimate <img src> values
+// produced by toTauriLocalImageSrc()/convertFileSrc() below still render.
+const SAFE_URI_REGEXP =
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|blob|asset|tauri):|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i;
 
 const pickFirstSrcFromSrcset = (srcset?: string | null): string | null => {
   if (!srcset) return null;
@@ -178,7 +192,17 @@ const sanitizeHTML = (html: string, preview?: boolean) => {
   const hasRenderableText = textContent.length > 0 && textContent !== TRUNCATION_MARKER;
   const hasRenderableElement = !!bodyClone.querySelector("p, div, span, img, table, ul, ol, li, h1, h2, h3, h4, h5, h6, blockquote, pre");
 
-  return { html: doc.body.innerHTML, hasRenderable: hasRenderableText || hasRenderableElement };
+  // Final hard gate: the DOM clean-up above is heuristic (Office-noise stripping,
+  // image src rewriting) and only ever removed <script>/on*/javascript: itself.
+  // DOMPurify additionally blocks <iframe srcdoc>, <object>/<embed>, <form> and any
+  // other vector before this untrusted, pasted-from-anywhere HTML reaches innerHTML.
+  const safeHtml = DOMPurify.sanitize(doc.body.innerHTML, {
+    FORBID_TAGS,
+    FORBID_ATTR,
+    ALLOWED_URI_REGEXP: SAFE_URI_REGEXP
+  });
+
+  return { html: safeHtml, hasRenderable: hasRenderableText || hasRenderableElement };
 };
 
 type HtmlContentProps = {

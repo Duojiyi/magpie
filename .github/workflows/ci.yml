@@ -30,7 +30,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-          components: clippy
+          components: clippy, rustfmt
 
       # 缓存 Rust 构建产物（Cargo.toml 位于 src-tauri）
       - name: cache Rust build
@@ -55,6 +55,17 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets
 
+      # Non-blocking quality/security signals (kept soft to match the existing "don't
+      # block on historical warnings yet" policy; tighten to required once clean).
+      - name: cargo fmt check (non-blocking)
+        continue-on-error: true
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: npm audit (non-blocking)
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
       # ---- C9（需求 27.3）：在 CI 上运行测试体系 ----
       # 排序原则：快的单测在前、最慢的 e2e 在后，尽早暴露失败，配合缓存控制总耗时 < 15 分钟。
 
@@ -74,3 +85,40 @@ jobs:
 
       - name: run e2e tests (Playwright)
         run: npx playwright test
+
+  # Compile-check the macOS-only code (objc2 / NSPasteboard / vibrancy) on every PR.
+  # Previously only windows-latest ran, so macOS build breaks surfaced only at release.
+  macos-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: setup node
+        uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: "npm"
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      # tauri-build reads frontendDist during check, so the frontend must exist first.
+      - name: build frontend
+        run: npm run build
+
+      # Non-blocking at first so a pre-existing macOS break doesn't red-wall every PR;
+      # flip to required once the macOS target is confirmed green.
+      - name: cargo check (macOS)
+        continue-on-error: true
+        working-directory: src-tauri
+        run: cargo check --all-targets

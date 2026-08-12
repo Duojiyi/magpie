@@ -72,7 +72,10 @@ pub struct ChunkMetadata {
     pub content_type: Option<String>,
 }
 
-pub struct UploadSessions(pub Mutex<HashMap<String, std::path::PathBuf>>);
+/// Chunked-upload sessions: upload_id -> (temp file path, last-activity time). The
+/// timestamp lets `upload_chunk` evict abandoned sessions (closed tab / lost Wi-Fi /
+/// failed finalize) so they don't permanently consume the session-count budget.
+pub struct UploadSessions(pub Mutex<HashMap<String, (std::path::PathBuf, std::time::Instant)>>);
 
 impl Default for UploadSessions {
     fn default() -> Self {

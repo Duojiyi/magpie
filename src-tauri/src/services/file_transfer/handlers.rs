@@ -68,7 +68,7 @@ pub async fn poll_messages(
                         && !m.content.starts_with("data:")
                         && !m.content.starts_with("/download/")
                     {
-                        let token = format!("temp_{}", m.id);
+                        let token = stable_poll_token(m.id);
                         let mut filename = "image.png".to_string();
                         let path = std::path::Path::new(&m.content);
                         if let Some(name) = path.file_name() {
@@ -238,7 +238,7 @@ pub async fn handle_text(
                 source_app_path: None,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_millis() as i64,
                 preview: preview.clone(),
                 is_pinned: false,
@@ -257,7 +257,7 @@ pub async fn handle_text(
         } else {
             let id = -(SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_micros() as i64
                 / 1000);
             let entry = ClipboardEntry {
@@ -269,7 +269,7 @@ pub async fn handle_text(
                 source_app_path: None,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_millis() as i64,
                 preview: preview.clone(),
                 is_pinned: false,
@@ -352,7 +352,7 @@ pub async fn upload(
             let target_path = save_dir.join(format!(
                 "{}_{}",
                 chrono::Utc::now().format("%Y%m%d%H%M%S"),
-                file_name
+                sanitize_upload_filename(&file_name)
             ));
 
             if let Ok(mut file) = File::create(&target_path).await {
@@ -424,37 +424,97 @@ pub async fn upload_chunk(
         None => return (StatusCode::BAD_REQUEST, "Missing data").into_response(),
     };
 
+    // Guard against a zero total: `chunk_index == total_chunks - 1` below would underflow
+    // (usize) and, in release (`panic = "abort"` is off for this arithmetic but the wrap
+    // yields a bogus huge index), the upload would never finalize and leak the temp file.
+    if meta.total_chunks == 0 || meta.chunk_index >= meta.total_chunks {
+        return (StatusCode::BAD_REQUEST, "Invalid chunk indices").into_response();
+    }
+
     let sessions = state.app_handle.state::<UploadSessions>();
+    let now = std::time::Instant::now();
+    const UPLOAD_SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+    // Pass 1: evict sessions idle beyond the TTL (closed tab / lost Wi-Fi / failed finalize)
+    // so they free their capacity slot, and delete their leftover temp files. Collect under
+    // the lock, then delete after releasing it — and BEFORE any early return below, so the
+    // 409/429 paths still perform the cleanup.
+    let stale_temp_files: Vec<std::path::PathBuf> = {
+        let mut sessions_map = sessions.0.lock().unwrap();
+        let stale = sessions_map
+            .iter()
+            .filter(|(_, (_, last))| now.duration_since(*last) >= UPLOAD_SESSION_TTL)
+            .map(|(_, (path, _))| path.clone())
+            .collect();
+        sessions_map.retain(|_, (_, last)| now.duration_since(*last) < UPLOAD_SESSION_TTL);
+        stale
+    };
+    for stale in stale_temp_files {
+        let _ = tokio::fs::remove_file(&stale).await;
+    }
+
+    // Pass 2: resolve (or create) this upload's session + temp path.
     let temp_path = {
         let mut sessions_map = sessions.0.lock().unwrap();
-        sessions_map
-            .entry(meta.upload_id.clone())
-            .or_insert_with(|| {
-                let mut path = state
-                    .app_handle
-                    .path()
-                    .download_dir()
-                    .unwrap_or_else(|_| std::env::temp_dir());
-                if let Ok(Some(custom)) = state
-                    .app_handle
-                    .state::<DbState>()
-                    .settings_repo
-                    .get("file_transfer_path")
-                {
-                    if !custom.trim().is_empty() {
-                        path = std::path::PathBuf::from(custom);
-                    }
+        // A chunk with index > 0 for a session we don't have means it expired / was evicted
+        // (or never started). Tell the client to restart with a fresh upload rather than
+        // silently truncating; chunk 0 below always starts the temp file clean.
+        if meta.chunk_index != 0 && !sessions_map.contains_key(&meta.upload_id) {
+            return (
+                StatusCode::CONFLICT,
+                "Upload session expired; restart the upload with a new upload_id",
+            )
+                .into_response();
+        }
+        // Reject brand-new sessions once at capacity so a malicious LAN client can't open
+        // unlimited chunked uploads and exhaust memory/disk (P1). A resuming session
+        // (already tracked) is always allowed to continue.
+        if !sessions_map.contains_key(&meta.upload_id)
+            && sessions_map.len() >= super::MAX_UPLOAD_SESSIONS
+        {
+            return (StatusCode::TOO_MANY_REQUESTS, "Too many upload sessions").into_response();
+        }
+        let entry = sessions_map.entry(meta.upload_id.clone()).or_insert_with(|| {
+            let mut path = state
+                .app_handle
+                .path()
+                .download_dir()
+                .unwrap_or_else(|_| std::env::temp_dir());
+            if let Ok(Some(custom)) = state
+                .app_handle
+                .state::<DbState>()
+                .settings_repo
+                .get("file_transfer_path")
+            {
+                if !custom.trim().is_empty() {
+                    path = std::path::PathBuf::from(custom);
                 }
-                if !path.exists() {
-                    let _ = std::fs::create_dir_all(&path);
-                }
-                path.join(format!(".tmp_{}", meta.upload_id))
-            })
-            .clone()
+            }
+            if !path.exists() {
+                let _ = std::fs::create_dir_all(&path);
+            }
+            // Hash the raw upload_id for the temp name: collision-resistant (unlike the
+            // many-to-one sanitize_upload_filename) so distinct sessions don't share a file.
+            (
+                path.join(format!(".tmp_{}", stable_upload_temp_name(&meta.upload_id))),
+                now,
+            )
+        });
+        entry.1 = now; // refresh last-activity on each received chunk
+        entry.0.clone()
     };
 
+    // Chunk 0 starts the temp file clean; later chunks append. Truncating in the same open
+    // call (rather than a separate remove) is robust even if a delete would fail (Windows
+    // handle contention) and closes the window where a concurrent rebuild of the same
+    // deterministic path could race a delete — so we never append onto stale bytes and
+    // finalize a silently-corrupt file.
     let mut options = tokio::fs::OpenOptions::new();
-    options.create(true).append(true).write(true);
+    if meta.chunk_index == 0 {
+        options.create(true).write(true).truncate(true);
+    } else {
+        options.create(true).append(true).write(true);
+    }
 
     if let Ok(mut file) = options.open(&temp_path).await {
         if let Err(e) = file.write_all(&data).await {
@@ -469,12 +529,23 @@ pub async fn upload_chunk(
         let final_filename = format!(
             "{}_{}",
             chrono::Utc::now().format("%Y%m%d%H%M%S"),
-            meta.file_name
+            sanitize_upload_filename(&meta.file_name)
         );
-        let final_path = temp_path.parent().unwrap().join(&final_filename);
+        let final_path = match temp_path.parent() {
+            Some(parent) => parent.join(&final_filename),
+            None => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Invalid temp path").into_response()
+            }
+        };
 
         if let Err(e) = tokio::fs::rename(&temp_path, &final_path).await {
             eprintln!("Error finalizing file: {}", e);
+            // Drop the session + temp file so a failed finalize doesn't leak a slot/file.
+            {
+                let mut sessions_map = sessions.0.lock().unwrap();
+                sessions_map.remove(&meta.upload_id);
+            }
+            let _ = tokio::fs::remove_file(&temp_path).await;
             return (StatusCode::INTERNAL_SERVER_ERROR, "Finalize failed").into_response();
         }
 
@@ -530,15 +601,27 @@ pub async fn handle_file_download_proxy(
             let is_image = mime.starts_with("image/");
             let is_video = mime.starts_with("video/");
             let encoded_name = urlencoding::encode(&filename);
+            // Sanitize the plain-ASCII fallback `filename=` value: strip quotes/backslashes
+            // and control chars that could break out of the Content-Disposition header or
+            // inject a new header (CRLF). The accurate name is carried by the RFC 5987
+            // `filename*` below, so this only affects legacy fallback rendering (P3).
+            let header_safe_name: String = filename
+                .chars()
+                .map(|c| match c {
+                    '"' | '\\' => '_',
+                    c if (c as u32) < 0x20 => '_',
+                    c => c,
+                })
+                .collect();
             let disposition = if is_image || is_video {
                 format!(
                     "inline; filename=\"{}\"; filename*=UTF-8''{}",
-                    filename, encoded_name
+                    header_safe_name, encoded_name
                 )
             } else {
                 format!(
                     "attachment; filename=\"{}\"; filename*=UTF-8''{}",
-                    filename, encoded_name
+                    header_safe_name, encoded_name
                 )
             };
 

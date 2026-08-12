@@ -286,6 +286,23 @@ pub async fn toggle_file_server(
     }
 }
 
+/// Upper bound for a single LAN request body. The server is opt-in and meant for
+/// phone↔PC file transfer, so the cap is generous (4 GiB) to not break legitimate
+/// large files, but finite: previously `DefaultBodyLimit::disable()` let anyone on the
+/// LAN stream an unbounded request and exhaust disk/memory (P0 DoS).
+const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024 * 1024;
+
+/// Per-request cap applied to every route EXCEPT the streaming `/upload`. In particular
+/// `/upload_chunk` buffers the whole `data` field in memory (`field.bytes()`), so peak
+/// memory is bounded by this × concurrent requests. Kept small (16 MiB — the bundled web
+/// client uses 512 KiB chunks) so a chunk request can't drive the process OOM.
+const MAX_CHUNK_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// Cap on concurrently tracked chunked-upload sessions. Each unfinished session pins a
+/// `.tmp_*` file + a map entry; without a bound a malicious client could open unlimited
+/// sessions and exhaust memory/disk (P1). New sessions beyond this are rejected.
+pub const MAX_UPLOAD_SESSIONS: usize = 64;
+
 pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle) {
     let (ws_tx, _) = broadcast::channel::<String>(100);
     {
@@ -302,7 +319,12 @@ pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle
         .route("/", get(handlers::index))
         .route("/ws", get(handlers::ws_handler))
         .route("/poll", get(handlers::poll_messages))
-        .route("/upload", post(handlers::upload))
+        // Only /upload streams to disk chunk-by-chunk, so it alone gets the large cap; the
+        // global layer below applies the small chunk cap to every other route.
+        .route(
+            "/upload",
+            post(handlers::upload).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES)),
+        )
         .route("/upload_chunk", post(handlers::upload_chunk))
         .route("/upload-chunk", post(handlers::upload_chunk))
         .route("/send_text", post(handlers::handle_text))
@@ -312,7 +334,7 @@ pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle
             get(handlers::handle_file_download_proxy),
         )
         .with_state(state)
-        .layer(DefaultBodyLimit::disable());
+        .layer(DefaultBodyLimit::max(MAX_CHUNK_BODY_BYTES));
 
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("Server error: {}", e);
@@ -436,7 +458,7 @@ pub async fn register_received_file(
     if settings.auto_copy_file.load(Ordering::Relaxed) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
         let entry = ClipboardEntry {
             id: 0,
@@ -464,7 +486,7 @@ pub async fn register_received_file(
         } else {
             let id = -(SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_micros() as i64
                 / 1000);
             let mut entry_mem = entry;

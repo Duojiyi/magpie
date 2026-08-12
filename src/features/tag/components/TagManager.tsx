@@ -80,6 +80,9 @@ export default function TagManager({ t, theme }: TagManagerProps) {
 
     const selectedTagRef = useRef<string | null>(null);
     useEffect(() => { selectedTagRef.current = selectedTag; }, [selectedTag]);
+    // Monotonic sequence to discard stale get_tag_items responses when the user switches
+    // tags quickly (P1): only the latest loadTagItems call may write state.
+    const loadTagSeqRef = useRef(0);
 
     useEffect(() => {
         try {
@@ -215,13 +218,20 @@ export default function TagManager({ t, theme }: TagManagerProps) {
     };
 
     const loadTagItems = async (tagName: string) => {
+        const seq = ++loadTagSeqRef.current;
         setLoading(true);
         setSelectedTag(tagName);
         try {
             const items = await invoke<ClipboardEntry[]>('get_tag_items', { tag: tagName });
+            if (seq !== loadTagSeqRef.current) return; // a newer tag load superseded this one
             setTagItems(items || []);
-        } catch (err) { console.error(err); setTagItems([]); }
-        finally { setLoading(false); }
+        } catch (err) {
+            console.error(err);
+            if (seq === loadTagSeqRef.current) setTagItems([]);
+        }
+        finally {
+            if (seq === loadTagSeqRef.current) setLoading(false);
+        }
     };
 
     const createTag = async (rawName: string) => {

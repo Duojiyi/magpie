@@ -924,7 +924,7 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
                 let last_show = LAST_SHOW_TIMESTAMP.load(Ordering::Relaxed);
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_millis() as u64;
 
                 // While the clipboard window is actively shown via hotkey navigation,
@@ -1215,7 +1215,12 @@ fn init_announcement_ping(app: &App, repo: &impl SettingsRepository) {
                         urlencoding::encode(&version),
                         urlencoding::encode(&anon_id)
                     );
-                    let _ = reqwest::blocking::get(ping_url);
+                    if let Ok(client) = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                    {
+                        let _ = client.get(&ping_url).send();
+                    }
                 });
             }
         }
@@ -1257,17 +1262,25 @@ fn setup_tray(app: &App, hide_tray: bool) {
                     let _ = window.set_focus();
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_millis() as u64;
                     LAST_SHOW_TIMESTAMP.store(now, Ordering::Relaxed);
                 }
             }
         })
-        .build(app)
-        .expect("Failed to build tray");
+        .build(app);
 
-    let _ = tray.set_visible(!hide_tray);
-    app.manage(tray);
+    // A tray build failure (rare, e.g. shell/Explorer not ready) must not abort the whole
+    // app under panic="abort"; continue without a tray icon instead (P3).
+    match tray {
+        Ok(tray) => {
+            let _ = tray.set_visible(!hide_tray);
+            app.manage(tray);
+        }
+        Err(e) => {
+            eprintln!("[setup] Failed to build tray icon, continuing without tray: {e}");
+        }
+    }
 }
 
 fn apply_initial_theme(app: &App) {
@@ -1309,22 +1322,44 @@ fn init_win32_hooks(_app: &App) {
                 windows::Win32::System::Threading::GetCurrentThreadId(),
                 Ordering::Relaxed,
             );
-            let h_instance = GetModuleHandleW(None).expect("Failed to get module handle");
-            let h_hook = SetWindowsHookExW(
+            // Degrade gracefully instead of panicking: if AV/security software blocks the
+            // low-level hooks, `expect` here would panic this thread and (panic="abort")
+            // kill the entire app. Log and disable global hotkeys instead (audit P1).
+            let h_instance = match GetModuleHandleW(None) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("[hooks] GetModuleHandleW failed; global hotkeys disabled: {e}");
+                    return;
+                }
+            };
+            let h_hook = match SetWindowsHookExW(
                 WH_KEYBOARD_LL,
                 Some(keyboard_proc),
                 Some(HINSTANCE(h_instance.0)),
                 0,
-            )
-            .expect("Failed to set hook");
+            ) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("[hooks] Keyboard hook install failed; global hotkeys disabled: {e}");
+                    return;
+                }
+            };
             HOOK_HANDLE.store(h_hook.0 as _, Ordering::SeqCst);
-            let h_mouse_hook = SetWindowsHookExW(
+            let h_mouse_hook = match SetWindowsHookExW(
                 WH_MOUSE_LL,
                 Some(mouse_proc),
                 Some(HINSTANCE(h_instance.0)),
                 0,
-            )
-            .expect("Failed to set mouse hook");
+            ) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("[hooks] Mouse hook install failed: {e}");
+                    // Unhook the keyboard hook we already installed before bailing.
+                    let _ = UnhookWindowsHookEx(h_hook);
+                    HOOK_HANDLE.store(std::ptr::null_mut(), Ordering::SeqCst);
+                    return;
+                }
+            };
             HOOK_MOUSE_HANDLE.store(h_mouse_hook.0 as _, Ordering::SeqCst);
 
             let mut msg = MSG::default();
@@ -1475,6 +1510,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             let _ = window_vibrancy::clear_vibrancy(&window);
             
             let _ = window.hide();
+            crate::app::window_manager::notify_window_hidden(window.app_handle());
             NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
             NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
         }
@@ -1495,7 +1531,7 @@ fn persist_window_size(window: &tauri::Window, width: u32, height: u32) {
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_millis() as u64;
     LAST_WINDOW_SIZE_EVENT_MS.store(now, Ordering::Relaxed);
 
@@ -1509,7 +1545,7 @@ fn persist_window_size(window: &tauri::Window, width: u32, height: u32) {
         let last_event = LAST_WINDOW_SIZE_EVENT_MS.load(Ordering::Relaxed);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
         if now.saturating_sub(last_event) < 200 {
             continue;
@@ -1562,7 +1598,7 @@ fn handle_blur(window: &tauri::Window) {
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_millis() as u64;
     if now.saturating_sub(LAST_SHOW_TIMESTAMP.load(Ordering::Relaxed)) < 500 {
         return;
@@ -1586,6 +1622,7 @@ fn handle_blur(window: &tauri::Window) {
                 let _ = window_vibrancy::clear_vibrancy(&w);
                 
                 let _ = w.hide();
+                crate::app::window_manager::notify_window_hidden(w.app_handle());
                 NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
                 release_win_keys();
                 let _ = restore_last_focus(w.app_handle().clone());

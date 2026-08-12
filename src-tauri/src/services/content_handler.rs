@@ -80,7 +80,10 @@ pub async fn open_content(
         )?;
     }
 
-    let path_str = temp_path.to_str().unwrap().to_string();
+    let path_str = temp_path
+        .to_str()
+        .ok_or_else(|| AppError::Internal("临时文件路径包含非法字符（非 UTF-8）".to_string()))?
+        .to_string();
     let file_path_clone = temp_path.clone();
 
     // Launch the file with appropriate application
@@ -143,8 +146,12 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
             println!("Attempting to launch URL handler: {}", app);
             let ps_script = format!(
                 "Start-Process -FilePath 'shell:AppsFolder\\{}' -ArgumentList '{}'",
-                app,
-                content.replace("'", "''")
+                // Escape single quotes in BOTH interpolated values. `app` was previously
+                // inserted raw, so a crafted AppUserModelID could break out of the quoted
+                // string and inject arbitrary PowerShell (audit P1). PS single-quote
+                // escaping is doubling the quote.
+                app.replace('\'', "''"),
+                content.replace('\'', "''")
             );
 
             #[cfg(target_os = "windows")]

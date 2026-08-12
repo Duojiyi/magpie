@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DEFAULT_THEME, normalizeThemeId, applyThemeClasses } from "../config/themes";
-import type { Locale } from "../types";
+import { normalizeLocale, type Locale } from "../types";
 import { isTauriRuntime } from "../lib/tauriRuntime";
 import {
   applyVibrancyClass,
@@ -95,7 +95,7 @@ export const useSettingsInit = ({
           }
 
           if (result["app.language"]) {
-            setLanguage(result["app.language"] as Locale);
+            setLanguage(normalizeLocale(result["app.language"]));
           }
 
           setSettings(result);

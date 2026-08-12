@@ -411,6 +411,7 @@ impl EmojiDropTarget {
             .map(|s| s.to_string());
 
         let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .ok()?;

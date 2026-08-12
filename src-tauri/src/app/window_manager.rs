@@ -37,6 +37,14 @@ fn same_monitor(a: &tauri::Monitor, b: &tauri::Monitor) -> bool {
     monitor_bounds(a) == monitor_bounds(b)
 }
 
+/// Notify the frontend that the main window just became hidden, so it can reset
+/// transient UI state (type/tag filters, search box) that should not survive a
+/// hide/show cycle. Call this right after every `window.hide()` on "main"
+/// (P1: upstream #142 — filters silently persisted across window hides).
+pub fn notify_window_hidden(app: &AppHandle) {
+    let _ = app.emit("window-hidden", ());
+}
+
 fn remap_fixed_window_position(
     window_pos: (i32, i32),
     window_size: (i32, i32),
@@ -89,6 +97,7 @@ pub fn toggle_window(app: &AppHandle) {
             
             let _ = window.set_focusable(false);
             let _ = window.hide();
+            notify_window_hidden(app);
 
             let _ = restore_last_focus(app.clone());
 
@@ -345,7 +354,7 @@ pub fn toggle_window(app: &AppHandle) {
         WindowExt::release_win_keys();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
         LAST_SHOW_TIMESTAMP.store(now, Ordering::Relaxed);
 
@@ -484,6 +493,7 @@ pub fn hide_window_cmd(app_handle: AppHandle) -> Result<(), String> {
         
         let _ = window.set_focusable(false);
         let _ = window.hide();
+        notify_window_hidden(&app_handle);
         NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
         NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
         let _ = restore_last_focus(app_handle.clone());

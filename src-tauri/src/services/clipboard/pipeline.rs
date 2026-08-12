@@ -40,7 +40,7 @@ impl PipelineContext {
         let active_app = source_snapshot.unwrap_or_else(get_clipboard_source_app_info);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         Self {
@@ -181,7 +181,14 @@ impl PipelineStage for DiscoveryStage {
 pub struct TransformationStage;
 impl PipelineStage for TransformationStage {
     fn process(&self, ctx: &mut PipelineContext) {
-        let entry = ctx.entry.as_mut().unwrap();
+        // `DiscoveryStage` always runs first and unconditionally populates `ctx.entry`,
+        // but this stage shouldn't be able to crash the whole capture pipeline (and,
+        // in release builds, the whole app - panic = "abort") if that invariant is ever
+        // broken by a future refactor; bail out of the pipeline instead of unwrapping.
+        let Some(entry) = ctx.entry.as_mut() else {
+            ctx.should_stop = true;
+            return;
+        };
         let settings = ctx.app_handle.state::<SettingsState>();
 
         // 行尾归一：仅将 \r\n 统一为 \n，保留全部前导/内部/尾部空白（空格、Tab、换行），
@@ -294,7 +301,10 @@ impl PipelineStage for ValidationStage {
 
         // Recent paste echo check
         {
-            let entry = ctx.entry.as_ref().unwrap();
+            let Some(entry) = ctx.entry.as_ref() else {
+                ctx.should_stop = true;
+                return;
+            };
             let queue_state = ctx.app_handle.state::<PasteQueue>();
             let queue = queue_state.0.lock().unwrap();
             if queue.last_action_was_paste {
@@ -334,7 +344,10 @@ impl PipelineStage for ValidationStage {
 
             let mut existing_id = None;
             let (content, content_type, html_content) = {
-                let e = ctx.entry.as_ref().unwrap();
+                let Some(e) = ctx.entry.as_ref() else {
+                    ctx.should_stop = true;
+                    return;
+                };
                 (
                     e.content.clone(),
                     e.content_type.clone(),
@@ -428,9 +441,10 @@ impl PipelineStage for ValidationStage {
                         .map(|e| e.tags)
                         .unwrap_or_default();
                     // 通过设置 entry.id 让 PersistenceStage 执行 UPDATE（"移到顶部"且不丢数据）
-                    let entry_mut = ctx.entry.as_mut().unwrap();
-                    entry_mut.tags = merge_tags_union(&existing_tags, &entry_mut.tags);
-                    entry_mut.id = id;
+                    if let Some(entry_mut) = ctx.entry.as_mut() {
+                        entry_mut.tags = merge_tags_union(&existing_tags, &entry_mut.tags);
+                        entry_mut.id = id;
+                    }
                 }
             }
 
@@ -440,7 +454,10 @@ impl PipelineStage for ValidationStage {
             let mut reuse_session_id: Option<i64> = None;
             {
                 let session = session_history.0.lock().unwrap();
-                let entry = ctx.entry.as_ref().expect("entry exists");
+                let Some(entry) = ctx.entry.as_ref() else {
+                    ctx.should_stop = true;
+                    return;
+                };
                 let normalized_content = dedup_key_for(&entry.content);
                 let entry_image_hash = if entry.content_type == "image" {
                     calc_image_hash(&entry.content)
@@ -492,7 +509,10 @@ impl PipelineStage for ValidationStage {
 pub struct PersistenceStage;
 impl PipelineStage for PersistenceStage {
     fn process(&self, ctx: &mut PipelineContext) {
-        let entry = ctx.entry.as_mut().unwrap();
+        let Some(entry) = ctx.entry.as_mut() else {
+            ctx.should_stop = true;
+            return;
+        };
         let settings = ctx.app_handle.state::<SettingsState>();
         let db_state = ctx.app_handle.state::<DbState>();
 
@@ -556,7 +576,7 @@ impl PipelineStage for PersistenceStage {
             // Use a unique negative ID for new session-only items
             let id = -(SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_micros() as i64
                 / 1000);
             entry.id = id;
@@ -576,7 +596,10 @@ impl PipelineStage for PersistenceStage {
 pub struct DistributionStage;
 impl PipelineStage for DistributionStage {
     fn process(&self, ctx: &mut PipelineContext) {
-        let entry = ctx.entry.as_ref().unwrap();
+        let Some(entry) = ctx.entry.as_ref() else {
+            ctx.should_stop = true;
+            return;
+        };
         let settings = ctx.app_handle.state::<SettingsState>();
 
         if entry.id == 0 && settings.persistent.load(Ordering::Relaxed) {

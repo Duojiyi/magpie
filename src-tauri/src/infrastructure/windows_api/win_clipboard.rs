@@ -1,4 +1,4 @@
-use windows::Win32::Foundation::HGLOBAL;
+use windows::Win32::Foundation::{GlobalFree, HGLOBAL};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
     GetClipboardFormatNameW, OpenClipboard, SetClipboardData,
@@ -9,6 +9,13 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, Global
 const CF_DIB: u32 = 8; // DIB
 const CF_DIBV5: u32 = 17; // DIBV5
 const CF_UNICODETEXT: u32 = 13; // Unicode text
+
+/// Free a `GlobalAlloc`'d block that failed to make it onto the clipboard. Only call
+/// this when `SetClipboardData`/`GlobalLock` did *not* succeed for `h`: on success,
+/// ownership passes to the OS and freeing it here would be a double-free.
+unsafe fn free_unowned_global(h: HGLOBAL) {
+    let _ = GlobalFree(Some(h));
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -134,6 +141,7 @@ unsafe fn set_named_clipboard_format_bytes(format_id: u32, data: &[u8]) -> Resul
     let h_global = GlobalAlloc(GHND, alloc_len).map_err(|e| e.to_string())?;
     let p_mem = GlobalLock(h_global);
     if p_mem.is_null() {
+        free_unowned_global(h_global);
         return Err("GlobalLock failed".to_string());
     }
 
@@ -144,11 +152,13 @@ unsafe fn set_named_clipboard_format_bytes(format_id: u32, data: &[u8]) -> Resul
     }
 
     let _ = GlobalUnlock(h_global);
-    SetClipboardData(
+    if let Err(e) = SetClipboardData(
         format_id,
         Some(windows::Win32::Foundation::HANDLE(h_global.0 as _)),
-    )
-    .map_err(|e| e.to_string())?;
+    ) {
+        free_unowned_global(h_global);
+        return Err(e.to_string());
+    }
     Ok(())
 }
 
@@ -496,6 +506,7 @@ pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
 
     let p_mem = GlobalLock(h_global);
     if p_mem.is_null() {
+        free_unowned_global(h_global);
         let _ = CloseClipboard();
         return Err("GlobalLock failed".into());
     }
@@ -520,6 +531,7 @@ pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
     )
     .is_err()
     {
+        free_unowned_global(h_global);
         let _ = CloseClipboard();
         return Err("SetClipboardData failed".into());
     }
@@ -628,13 +640,76 @@ pub unsafe fn get_named_clipboard_formats(
     result
 }
 
+/// Write CF_UNICODETEXT + CF_HTML onto a clipboard that the caller already has open
+/// (and has already emptied, if desired). Split out of `set_clipboard_text_and_html_inner`
+/// so a combined transaction (image + text/html + named formats, see
+/// `set_clipboard_rich_content` below) can run all writes under one
+/// OpenClipboard/CloseClipboard pair instead of several sequential ones.
+unsafe fn write_text_html_locked(text: &str, cf_html: &str) -> Result<(), String> {
+    use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
+
+    // 1) Set CF_UNICODETEXT
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    wide.push(0);
+    let byte_len = wide.len() * 2;
+    let h_text = GlobalAlloc(GHND, byte_len).map_err(|e| e.to_string())?;
+    let p_text = GlobalLock(h_text);
+    if p_text.is_null() {
+        free_unowned_global(h_text);
+        return Err("GlobalLock failed".to_string());
+    }
+    std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, p_text as *mut u8, byte_len);
+    let _ = GlobalUnlock(h_text);
+    if SetClipboardData(
+        CF_UNICODETEXT,
+        Some(windows::Win32::Foundation::HANDLE(h_text.0 as _)),
+    )
+    .is_err()
+    {
+        free_unowned_global(h_text);
+        return Err("SetClipboardData (CF_UNICODETEXT) failed".to_string());
+    }
+
+    // 2) Set CF_HTML
+    let format_name = "HTML Format";
+    let name_w: Vec<u16> = format_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let format_id = RegisterClipboardFormatW(windows::core::PCWSTR(name_w.as_ptr()));
+    if format_id == 0 {
+        return Err("RegisterClipboardFormatW failed".to_string());
+    }
+
+    let html_bytes = cf_html.as_bytes();
+    let h_html = GlobalAlloc(GHND, html_bytes.len() + 1).map_err(|e| e.to_string())?;
+    let p_html = GlobalLock(h_html);
+    if p_html.is_null() {
+        free_unowned_global(h_html);
+        return Err("GlobalLock failed".to_string());
+    }
+    std::ptr::copy_nonoverlapping(html_bytes.as_ptr(), p_html as *mut u8, html_bytes.len());
+    *(p_html.add(html_bytes.len()) as *mut u8) = 0;
+    let _ = GlobalUnlock(h_html);
+    // CF_HTML is best-effort here (text already landed above), so a failure is not
+    // propagated - but the allocation must still be freed instead of leaked.
+    if SetClipboardData(
+        format_id,
+        Some(windows::Win32::Foundation::HANDLE(h_html.0 as _)),
+    )
+    .is_err()
+    {
+        free_unowned_global(h_html);
+    }
+
+    Ok(())
+}
+
 unsafe fn set_clipboard_text_and_html_inner(
     text: &str,
     cf_html: &str,
     clear_existing: bool,
 ) -> Result<(), String> {
-    use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
-
     if OpenClipboard(None).is_err() {
         return Err("Cannot open clipboard".into());
     }
@@ -643,53 +718,7 @@ unsafe fn set_clipboard_text_and_html_inner(
         if clear_existing {
             let _ = EmptyClipboard();
         }
-
-        // 1) Set CF_UNICODETEXT
-        let mut wide: Vec<u16> = text.encode_utf16().collect();
-        wide.push(0);
-        let byte_len = wide.len() * 2;
-        let h_text = GlobalAlloc(GHND, byte_len).map_err(|e| e.to_string())?;
-        let p_text = GlobalLock(h_text);
-        if p_text.is_null() {
-            return Err("GlobalLock failed".to_string());
-        }
-        std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, p_text as *mut u8, byte_len);
-        let _ = GlobalUnlock(h_text);
-        if SetClipboardData(
-            CF_UNICODETEXT,
-            Some(windows::Win32::Foundation::HANDLE(h_text.0 as _)),
-        )
-        .is_err()
-        {
-            return Err("SetClipboardData (CF_UNICODETEXT) failed".to_string());
-        }
-
-        // 2) Set CF_HTML
-        let format_name = "HTML Format";
-        let name_w: Vec<u16> = format_name
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let format_id = RegisterClipboardFormatW(windows::core::PCWSTR(name_w.as_ptr()));
-        if format_id == 0 {
-            return Err("RegisterClipboardFormatW failed".to_string());
-        }
-
-        let html_bytes = cf_html.as_bytes();
-        let h_html = GlobalAlloc(GHND, html_bytes.len() + 1).map_err(|e| e.to_string())?;
-        let p_html = GlobalLock(h_html);
-        if p_html.is_null() {
-            return Err("GlobalLock failed".to_string());
-        }
-        std::ptr::copy_nonoverlapping(html_bytes.as_ptr(), p_html as *mut u8, html_bytes.len());
-        *(p_html.add(html_bytes.len()) as *mut u8) = 0;
-        let _ = GlobalUnlock(h_html);
-        let _ = SetClipboardData(
-            format_id,
-            Some(windows::Win32::Foundation::HANDLE(h_html.0 as _)),
-        );
-
-        Ok(())
+        write_text_html_locked(text, cf_html)
     })();
 
     let _ = CloseClipboard();
@@ -706,12 +735,37 @@ pub unsafe fn append_clipboard_text_and_html(text: &str, cf_html: &str) -> Resul
     set_clipboard_text_and_html_inner(text, cf_html, false)
 }
 
+/// Write extra named formats onto a clipboard the caller already has open. Split out
+/// of `append_named_clipboard_formats` for the same reason as `write_text_html_locked`
+/// above - lets a combined transaction reuse this without opening/closing again.
+unsafe fn write_named_formats_locked(formats: &[NamedClipboardFormat]) -> Result<(), String> {
+    use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
+
+    for format in formats {
+        if format.name.trim().is_empty() {
+            continue;
+        }
+
+        let name_w: Vec<u16> = format
+            .name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let format_id = RegisterClipboardFormatW(windows::core::PCWSTR(name_w.as_ptr()));
+        if format_id == 0 {
+            continue;
+        }
+
+        set_named_clipboard_format_bytes(format_id, &format.data)?;
+    }
+
+    Ok(())
+}
+
 /// Append registered clipboard formats while keeping existing data intact.
 pub unsafe fn append_named_clipboard_formats(
     formats: &[NamedClipboardFormat],
 ) -> Result<(), String> {
-    use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
-
     if formats.is_empty() {
         return Ok(());
     }
@@ -720,27 +774,7 @@ pub unsafe fn append_named_clipboard_formats(
         return Err("Cannot open clipboard".into());
     }
 
-    let result = (|| {
-        for format in formats {
-            if format.name.trim().is_empty() {
-                continue;
-            }
-
-            let name_w: Vec<u16> = format
-                .name
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-            let format_id = RegisterClipboardFormatW(windows::core::PCWSTR(name_w.as_ptr()));
-            if format_id == 0 {
-                continue;
-            }
-
-            set_named_clipboard_format_bytes(format_id, &format.data)?;
-        }
-
-        Ok(())
-    })();
+    let result = write_named_formats_locked(formats);
 
     let _ = CloseClipboard();
     result
@@ -781,17 +815,23 @@ pub unsafe fn set_clipboard_image_and_gif(
                 if format_id != 0 {
                     if let Ok(h_global) = GlobalAlloc(GHND, data.len()) {
                         let p_mem = GlobalLock(h_global);
-                        if !p_mem.is_null() {
+                        if p_mem.is_null() {
+                            free_unowned_global(h_global);
+                        } else {
                             std::ptr::copy_nonoverlapping(
                                 data.as_ptr(),
                                 p_mem as *mut u8,
                                 data.len(),
                             );
                             let _ = GlobalUnlock(h_global);
-                            let _ = SetClipboardData(
+                            if SetClipboardData(
                                 format_id,
                                 Some(windows::Win32::Foundation::HANDLE(h_global.0 as _)),
-                            );
+                            )
+                            .is_err()
+                            {
+                                free_unowned_global(h_global);
+                            }
                         }
                     }
                 }
@@ -807,6 +847,7 @@ pub unsafe fn set_clipboard_image_and_gif(
         let h_global = GlobalAlloc(GHND, total_size).map_err(|e| e.to_string())?;
         let p_mem = GlobalLock(h_global);
         if p_mem.is_null() {
+            free_unowned_global(h_global);
             return Err("GlobalLock failed".to_string());
         }
 
@@ -856,6 +897,7 @@ pub unsafe fn set_clipboard_image_and_gif(
         )
         .is_err()
         {
+            free_unowned_global(h_global);
             return Err("SetClipboardData (CF_DIB) failed".to_string());
         }
 
@@ -866,45 +908,20 @@ pub unsafe fn set_clipboard_image_and_gif(
     result
 }
 
-/// Set image with multiple formats: GIF (optional), PNG (optional), and DIB
-/// This maximizes compatibility with different applications
-/// For GIF: Also sets CF_HDROP with temp file path (WeChat/QQ need this for animated GIFs)
-pub unsafe fn set_clipboard_image_with_formats(
-    image: ImageData,
+/// Write image formats (optional CF_HDROP temp-file pointer for GIF, optional raw
+/// GIF/PNG bytes, and the universal CF_DIB fallback) onto a clipboard the caller
+/// already has open. Split out of `set_clipboard_image_with_formats` for the same
+/// reason as `write_text_html_locked` above.
+unsafe fn write_image_formats_locked(
+    image: &ImageData,
     gif_data: Option<&[u8]>,
     png_data: Option<&[u8]>,
-) -> Result<Option<String>, String> {
+    gif_temp_path: &Option<String>,
+) -> Result<(), String> {
     use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
 
-    // For GIF, create temp file first (before opening clipboard)
-    let gif_temp_path: Option<String> = if let Some(gif_bytes) = gif_data {
-        let temp_dir = std::env::temp_dir();
-        let filename = format!(
-            "Magpie_GIF_{}.gif",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-        );
-        let path = temp_dir.join(filename);
-        if std::fs::write(&path, gif_bytes).is_ok() {
-            path.to_str().map(|s| s.to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if OpenClipboard(None).is_err() {
-        return Err("Cannot open clipboard".into());
-    }
-
-    let result = (|| {
-        let _ = EmptyClipboard();
-
-        // 1. Set CF_HDROP for GIF (WeChat/QQ need file path for animated GIF)
-        if let Some(ref path) = gif_temp_path {
+    // 1. Set CF_HDROP for GIF (WeChat/QQ need file path for animated GIF)
+    if let Some(ref path) = gif_temp_path {
             let mut buffer: Vec<u16> = Vec::new();
             buffer.extend(path.encode_utf16());
             buffer.push(0);
@@ -916,7 +933,9 @@ pub unsafe fn set_clipboard_image_with_formats(
 
             if let Ok(h_global) = GlobalAlloc(GHND, total_size) {
                 let p_mem = GlobalLock(h_global);
-                if !p_mem.is_null() {
+                if p_mem.is_null() {
+                    free_unowned_global(h_global);
+                } else {
                     // Write DROPFILES struct
                     *(p_mem as *mut u32) = 20; // pFiles offset
                     *(p_mem.add(16) as *mut i32) = 1; // fWide = true
@@ -926,10 +945,14 @@ pub unsafe fn set_clipboard_image_with_formats(
                     std::ptr::copy_nonoverlapping(buffer.as_ptr(), p_files, buffer.len());
 
                     let _ = GlobalUnlock(h_global);
-                    let _ = SetClipboardData(
+                    if SetClipboardData(
                         CF_HDROP,
                         Some(windows::Win32::Foundation::HANDLE(h_global.0 as _)),
-                    );
+                    )
+                    .is_err()
+                    {
+                        free_unowned_global(h_global);
+                    }
                 }
             }
         }
@@ -950,17 +973,23 @@ pub unsafe fn set_clipboard_image_with_formats(
                 if format_id != 0 {
                     if let Ok(h_global) = GlobalAlloc(GHND, gif_bytes.len()) {
                         let p_mem = GlobalLock(h_global);
-                        if !p_mem.is_null() {
+                        if p_mem.is_null() {
+                            free_unowned_global(h_global);
+                        } else {
                             std::ptr::copy_nonoverlapping(
                                 gif_bytes.as_ptr(),
                                 p_mem as *mut u8,
                                 gif_bytes.len(),
                             );
                             let _ = GlobalUnlock(h_global);
-                            let _ = SetClipboardData(
+                            if SetClipboardData(
                                 format_id,
                                 Some(windows::Win32::Foundation::HANDLE(h_global.0 as _)),
-                            );
+                            )
+                            .is_err()
+                            {
+                                free_unowned_global(h_global);
+                            }
                         }
                     }
                 }
@@ -977,17 +1006,23 @@ pub unsafe fn set_clipboard_image_with_formats(
                 if format_id != 0 {
                     if let Ok(h_global) = GlobalAlloc(GHND, png_bytes.len()) {
                         let p_mem = GlobalLock(h_global);
-                        if !p_mem.is_null() {
+                        if p_mem.is_null() {
+                            free_unowned_global(h_global);
+                        } else {
                             std::ptr::copy_nonoverlapping(
                                 png_bytes.as_ptr(),
                                 p_mem as *mut u8,
                                 png_bytes.len(),
                             );
                             let _ = GlobalUnlock(h_global);
-                            let _ = SetClipboardData(
+                            if SetClipboardData(
                                 format_id,
                                 Some(windows::Win32::Foundation::HANDLE(h_global.0 as _)),
-                            );
+                            )
+                            .is_err()
+                            {
+                                free_unowned_global(h_global);
+                            }
                         }
                     }
                 }
@@ -1002,6 +1037,7 @@ pub unsafe fn set_clipboard_image_with_formats(
         let h_global = GlobalAlloc(GHND, total_size).map_err(|e| e.to_string())?;
         let p_mem = GlobalLock(h_global);
         if p_mem.is_null() {
+            free_unowned_global(h_global);
             return Err("GlobalLock failed".to_string());
         }
 
@@ -1048,12 +1084,106 @@ pub unsafe fn set_clipboard_image_with_formats(
         )
         .is_err()
         {
+            free_unowned_global(h_global);
             return Err("SetClipboardData (CF_DIB) failed".to_string());
         }
 
-        Ok(gif_temp_path.clone())
+    Ok(())
+}
+
+/// For GIF: create a temp file holding the raw GIF bytes (WeChat/QQ need a real file
+/// path via CF_HDROP to render animated GIFs pasted from the clipboard). Must run
+/// before OpenClipboard since it touches the filesystem, not the clipboard.
+unsafe fn write_gif_temp_file(gif_data: Option<&[u8]>) -> Option<String> {
+    let gif_bytes = gif_data?;
+    let temp_dir = std::env::temp_dir();
+    let filename = format!(
+        "Magpie_GIF_{}.gif",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let path = temp_dir.join(filename);
+    if std::fs::write(&path, gif_bytes).is_ok() {
+        path.to_str().map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Set image with multiple formats: GIF (optional), PNG (optional), and DIB
+/// This maximizes compatibility with different applications
+/// For GIF: Also sets CF_HDROP with temp file path (WeChat/QQ need this for animated GIFs)
+pub unsafe fn set_clipboard_image_with_formats(
+    image: ImageData,
+    gif_data: Option<&[u8]>,
+    png_data: Option<&[u8]>,
+) -> Result<Option<String>, String> {
+    // For GIF, create temp file first (before opening clipboard)
+    let gif_temp_path = write_gif_temp_file(gif_data);
+
+    if OpenClipboard(None).is_err() {
+        return Err("Cannot open clipboard".into());
+    }
+
+    let result = (|| {
+        let _ = EmptyClipboard();
+        write_image_formats_locked(&image, gif_data, png_data, &gif_temp_path)
     })();
 
     let _ = CloseClipboard();
-    result
+    result.map(|_| gif_temp_path)
+}
+
+/// Set image formats + Unicode text + CF_HTML + extra named formats in a single
+/// OpenClipboard/EmptyClipboard/CloseClipboard transaction, instead of the up-to-3
+/// separate clipboard sessions callers previously chained (image, then text/html,
+/// then named formats). Chaining separate sessions meant that if e.g. the text/html
+/// step failed or lost a race for `OpenClipboard` to another process after the image
+/// step had already committed, the clipboard was left holding only the image with no
+/// text/HTML - a partially-written, inconsistent paste (P1: rich content + image paste
+/// could silently leave the clipboard half-written on failure).
+///
+/// `image_formats` is `None` for the plain rich-text (no inline image) case. If the
+/// image or text/html step fails, the clipboard is emptied again before closing so the
+/// end result is always "fully written" or "empty", never a silent partial mix. Named
+/// formats remain best-effort, matching the previous per-call behavior.
+pub unsafe fn set_clipboard_rich_content(
+    image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
+    text: &str,
+    cf_html: &str,
+    named_formats: &[NamedClipboardFormat],
+) -> Result<Option<String>, String> {
+    let gif_temp_path = image_formats
+        .as_ref()
+        .and_then(|(_, gif_data, _)| write_gif_temp_file(*gif_data));
+
+    if OpenClipboard(None).is_err() {
+        return Err("Cannot open clipboard".into());
+    }
+
+    let result = (|| {
+        let _ = EmptyClipboard();
+
+        if let Some((image, gif_data, png_data)) = &image_formats {
+            write_image_formats_locked(image, *gif_data, *png_data, &gif_temp_path)?;
+        }
+
+        write_text_html_locked(text, cf_html)?;
+
+        // Best-effort: don't fail the whole transaction over extra named formats.
+        let _ = write_named_formats_locked(named_formats);
+
+        Ok(())
+    })();
+
+    if result.is_err() {
+        // The required formats didn't fully land - leave a clean, unambiguous empty
+        // clipboard rather than whatever partial subset made it through.
+        let _ = EmptyClipboard();
+    }
+
+    let _ = CloseClipboard();
+    result.map(|_| gif_temp_path)
 }

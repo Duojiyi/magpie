@@ -76,7 +76,10 @@ export const useAiActions = ({
         const errorMsg = err?.toString() || "AI processing failed";
         pushToast(errorMsg, 5000, "error");
       } finally {
-        setProcessingAiId(null);
+        // Only clear the spinner if THIS request is still the active one. With two AI
+        // actions in flight on different items, the first to finish must not clear the
+        // second item's in-progress state (P1 race).
+        setProcessingAiId((current) => (current === id ? null : current));
       }
     },
     [aiProfiles, language, pushToast, setHistory, setProcessingAiId, setShowSettings]
