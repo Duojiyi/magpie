@@ -195,6 +195,10 @@ pub fn set_window_pinned(app_handle: AppHandle, state: State<'_, DbState>, pinne
     crate::WINDOW_PINNED.store(pinned, Ordering::Relaxed);
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.set_always_on_top(pinned);
+        // Windows-only: paired with WS_EX_NOACTIVATE below so a pinned window stays visible
+        // without stealing focus. Elsewhere there is no such pairing, and marking a *visible*
+        // window non-focusable simply makes it impossible to type into.
+        #[cfg(windows)]
         let _ = window.set_focusable(false);
         #[cfg(windows)]
         {

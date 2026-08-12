@@ -414,7 +414,10 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
 
     // 2. Then handle the specific visibility logic based on pinned state
     if crate::WINDOW_PINNED.load(Ordering::Relaxed) {
-        // In pinned mode, stay visible but ensure window does NOT have focus
+        // In pinned mode, stay visible but ensure window does NOT have focus.
+        // Windows only: elsewhere this would leave a visible window that can never be typed
+        // into again, and focus was already handed back by hiding in restore_focus_before_paste.
+        #[cfg(target_os = "windows")]
         if let Some(window) = app_handle.get_webview_window("main") {
             // Make sure the window doesn't steal focus back
             let _ = window.set_focusable(false);
@@ -1029,7 +1032,9 @@ async fn perform_paste_action(
 
 async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
     if crate::WINDOW_PINNED.load(Ordering::Relaxed) {
-        // In pinned mode, keep window non-focusable and restore focus back to last app
+        // In pinned mode, keep window non-focusable and restore focus back to last app.
+        // Windows only — see the note in handle_window_focus_for_paste.
+        #[cfg(target_os = "windows")]
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.set_focusable(false);
         }

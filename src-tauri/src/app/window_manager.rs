@@ -371,6 +371,13 @@ pub fn toggle_window(app: &AppHandle) {
 
         let pinned = WINDOW_PINNED.load(Ordering::Relaxed);
         let _ = window.set_always_on_top(pinned);
+        // Windows pairs this with WS_EX_NOACTIVATE + SW_SHOWNA below to show without stealing
+        // focus, and restores focusability on demand via `activate_window_focus`. There is no
+        // equivalent pairing on macOS/Linux, so leaving the window non-focusable there just
+        // makes it permanently dead to input: the search box cannot be typed into and the
+        // keyboard navigation (which relies on webview keydown, there being no low-level hook
+        // outside Windows) never receives a key.
+        #[cfg(target_os = "windows")]
         let _ = window.set_focusable(false);
         let _ = app.emit("window-pinned-changed", pinned);
 
@@ -438,7 +445,12 @@ pub fn toggle_window(app: &AppHandle) {
 
         #[cfg(not(windows))]
         {
+            // Show *and* focus. Without the Win32 no-activate trick the only way the user can
+            // type in the search box or drive the list with the arrow keys is for the window
+            // to actually take focus.
+            let _ = window.set_focusable(true);
             let _ = window.show();
+            let _ = window.set_focus();
         }
     }
 }
