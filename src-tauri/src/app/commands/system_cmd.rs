@@ -656,7 +656,16 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
     // Selecting the folder we already use would move files onto themselves: the database gets
     // renamed to clipboard.db.backup, the follow-up move then fails because the source is gone,
     // and we bail out with the data left under a name the app never opens.
+    //
+    // Still record the choice. The active folder and datapath.txt can legitimately disagree —
+    // startup falls back to the default folder when a configured drive is missing — so picking
+    // the folder currently in use is a meaningful way to make that fallback permanent.
     if old_path_buf == new_data_path {
+        let config_dir = app_handle.path().app_data_dir().map_err(AppError::from)?;
+        if !config_dir.exists() {
+            std::fs::create_dir_all(&config_dir).map_err(AppError::from)?;
+        }
+        std::fs::write(config_dir.join("datapath.txt"), &clean_path).map_err(AppError::from)?;
         return Ok(());
     }
 
@@ -678,17 +687,14 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
     let old_key = old_path_buf.join("local.key");
     let new_key = new_data_path.join("local.key");
     if old_key.exists() {
-        let old_key_bytes = std::fs::read(&old_key).map_err(|e| {
-            AppError::Internal(format!("Failed to read the encryption key: {}", e))
-        })?;
+        let old_key_bytes = std::fs::read(&old_key)
+            .map_err(|e| AppError::Internal(format!("读取本机加密密钥失败：{}", e)))?;
         if new_key.exists() {
             let new_key_bytes = std::fs::read(&new_key).unwrap_or_default();
             if new_key_bytes != old_key_bytes {
                 return Err(AppError::Validation(
-                    "The target folder already contains a different encryption key, so it \
-                     belongs to another encrypted data set. Moving here would make the current \
-                     data permanently unreadable. Nothing has been moved; choose an empty \
-                     folder instead."
+                    "目标文件夹已包含另一份加密数据的密钥，迁移过去会导致当前数据永久无法解密。\
+                     已中止，未移动任何文件；请改选一个空文件夹。"
                         .to_string(),
                 ));
             }
@@ -696,8 +702,7 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
             // Copy, not move: the source folder keeps a usable key as a fallback.
             std::fs::copy(&old_key, &new_key).map_err(|e| {
                 AppError::Internal(format!(
-                    "Failed to copy the encryption key to the new folder ({}). \
-                     Nothing has been moved.",
+                    "复制本机加密密钥到新文件夹失败（{}）。已中止，未移动任何文件。",
                     e
                 ))
             })?;
