@@ -178,6 +178,10 @@ fn is_natively_handled_format(name: &str) -> bool {
         || lower.starts_with("image/")
         || lower.contains("utf8_string")
         || lower.contains("string")
+        // X11 plain-text targets. Without these they look "private", get stored, and then get
+        // written back a second time alongside the real text.
+        || lower == "text"
+        || lower.contains("compound_text")
         || lower.contains("targets")
         || lower.contains("timestamp")
         || lower.contains("multiple")
@@ -211,9 +215,37 @@ pub fn get_files() -> Option<Vec<String>> {
     Some(files.iter().map(|f| file_uri_to_path(f)).collect())
 }
 
+/// Formats currently offered by the clipboard, cached per clipboard change.
+///
+/// Reading a selection on X11 costs a round trip with a polling wait, and the capture pipeline
+/// probes on the order of thirty format names per copy — the vast majority of which are absent.
+/// Asking once which formats exist, and answering the rest from that list, turns those probes
+/// into memory lookups. Keyed on the change sequence so it can never serve a stale answer.
+static FORMAT_CACHE: Mutex<Option<(u32, Vec<String>)>> = Mutex::new(None);
+
+fn clipboard_offers(format: &str) -> bool {
+    let seq = change_sequence();
+    let mut cache = FORMAT_CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+
+    if cache.as_ref().map(|(cached, _)| *cached) != Some(seq) {
+        let Ok(ctx) = ctx() else {
+            return false;
+        };
+        let formats = ctx.available_formats().unwrap_or_default();
+        *cache = Some((seq, formats));
+    }
+
+    cache
+        .as_ref()
+        .map(|(_, formats)| formats.iter().any(|f| f.eq_ignore_ascii_case(format)))
+        .unwrap_or(false)
+}
+
 /// Read a clipboard format by its *Windows* name, translating to what this platform offers.
-/// Formats without a portable equivalent (private OLE formats, animated GIF containers)
-/// return `None`, which callers already treat as "format not present".
+/// Formats without a portable equivalent (private OLE containers) return `None`, which callers
+/// already treat as "format not present".
 pub fn get_raw_format(name: &str) -> Option<Vec<u8>> {
     // Match the name *before* touching the clipboard. The capture pipeline probes ~10 format
     // names per copy and we recognise a few of them; acquiring the connection first would make
@@ -225,16 +257,20 @@ pub fn get_raw_format(name: &str) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let ctx = ctx().ok()?;
     if is_gif_format_name(name) {
         // Serve the original GIF bytes so animation survives. Without this the pipeline falls
         // through to the still-image path, which re-encodes to PNG and freezes the first frame.
+        if !clipboard_offers(native_gif_format()) {
+            return None;
+        }
+        let ctx = ctx().ok()?;
         let raw = ctx.get_buffer(native_gif_format()).ok()?;
         if raw.len() > 6 && (raw.starts_with(b"GIF87a") || raw.starts_with(b"GIF89a")) {
             return Some(raw);
         }
         return None;
     }
+    let ctx = ctx().ok()?;
     if is_html_format_name(name) {
         let html = ctx.get_html().ok()?;
         if html.trim().is_empty() {
@@ -336,13 +372,27 @@ pub fn get_named_formats(
     max_total_bytes: usize,
     keep: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, Vec<u8>)> {
+    // Reuse the per-change format list rather than asking again.
+    let seq = change_sequence();
+    let formats = {
+        let mut cache = FORMAT_CACHE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if cache.as_ref().map(|(cached, _)| *cached) != Some(seq) {
+            let Ok(ctx) = ctx() else {
+                return Vec::new();
+            };
+            *cache = Some((seq, ctx.available_formats().unwrap_or_default()));
+        }
+        match cache.as_ref() {
+            Some((_, formats)) => formats.clone(),
+            None => return Vec::new(),
+        }
+    };
+
     let Ok(ctx) = ctx() else {
         return Vec::new();
     };
-    let Ok(formats) = ctx.available_formats() else {
-        return Vec::new();
-    };
-
     let mut out: Vec<(String, Vec<u8>)> = Vec::new();
     let mut total = 0usize;
     for name in formats {

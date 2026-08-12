@@ -719,6 +719,32 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
                 }
             }
         }
+
+        // 1.2b Carry the at-rest encryption key across with the database.
+        //
+        // Off Windows, sensitive values (API keys, MQTT credentials, the cloud-sync E2E
+        // passphrase, entries tagged sensitive) are encrypted with a key stored beside the
+        // database. Leaving it behind means the new location has ciphertext and no key: the
+        // app would mint a fresh key on next start and every one of those values becomes
+        // permanently unreadable. Copy rather than move, so the old directory keeps a usable
+        // fallback, and never clobber a key that already exists at the destination — that one
+        // may be protecting data already there.
+        let old_key = old_path_buf.join("local.key");
+        let new_key = new_data_path.join("local.key");
+        if old_key.exists() && !new_key.exists() {
+            if let Err(err) = std::fs::copy(&old_key, &new_key) {
+                return Err(AppError::Internal(format!(
+                    "Failed to copy the encryption key to the new data folder ({}). \
+                     Migration aborted so encrypted values stay readable.",
+                    err
+                )));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&new_key, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
 
     // 1.3 Rewrite internal attachment paths inside DB (if DB exists in new path)

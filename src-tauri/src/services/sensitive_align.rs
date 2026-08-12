@@ -3,7 +3,8 @@ use std::time::Duration;
 use rusqlite::params;
 use tauri::{AppHandle, Manager};
 
-use crate::database::{DbState, ENCRYPT_PREFIX, SENSITIVE_TAGS};
+use crate::database::{DbState, SENSITIVE_TAGS};
+use crate::infrastructure::encryption;
 use crate::infrastructure::repository::settings_repo::SettingsRepository;
 
 pub fn spawn_sensitive_alignment(app_handle: AppHandle) {
@@ -29,8 +30,11 @@ fn run_alignment(app_handle: AppHandle) {
         format!("({})", parts.join(","))
     };
 
-    // 加密前缀用于在 SQL 内直接判断各字段是否已加密，避免把完整内容读进内存
-    let enc_like = format!("{}%", ENCRYPT_PREFIX);
+    // 加密前缀用于在 SQL 内直接判断各字段是否已加密，避免把完整内容读进内存。
+    // 两种方案都要匹配：Windows 用 DPAPI，其它平台用可移植方案；只认其中一种会让另一平台上
+    // 已加密的行被判定为「未加密」，从而被反复重写。
+    let enc_like = format!("{}%", encryption::ENCRYPTED_PREFIXES[0]);
+    let enc_like_alt = format!("{}%", encryption::ENCRYPTED_PREFIXES[1]);
 
     let mut cursor_ts = i64::MAX;
     let mut cursor_id = i64::MAX;
@@ -49,10 +53,10 @@ fn run_alignment(app_handle: AppHandle) {
         // 使消费队列的内存占用与条目内容体积无关、严格有界，避免大文本条目导致的内存激增（需求 22.2）。
         let sql = format!(
             "SELECT ch.id, ch.timestamp,
-                    COALESCE(ch.content LIKE ?4, 0) AS content_encrypted,
-                    COALESCE(ch.preview LIKE ?4, 0) AS preview_encrypted,
+                    COALESCE(ch.content LIKE ?4 OR ch.content LIKE ?5, 0) AS content_encrypted,
+                    COALESCE(ch.preview LIKE ?4 OR ch.preview LIKE ?5, 0) AS preview_encrypted,
                     (ch.html_content IS NOT NULL) AS has_html,
-                    COALESCE(ch.html_content LIKE ?4, 0) AS html_encrypted,
+                    COALESCE(ch.html_content LIKE ?4 OR ch.html_content LIKE ?5, 0) AS html_encrypted,
                     EXISTS (
                         SELECT 1 FROM entry_tags se
                         WHERE se.entry_id = ch.id
@@ -74,7 +78,7 @@ fn run_alignment(app_handle: AppHandle) {
             };
 
             let rows = match stmt.query_map(
-                params![cursor_ts, cursor_id, batch_size, enc_like],
+                params![cursor_ts, cursor_id, batch_size, enc_like, enc_like_alt],
                 |row| {
                     let id: i64 = row.get(0)?;
                     let ts: i64 = row.get(1)?;

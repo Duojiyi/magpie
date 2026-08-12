@@ -40,28 +40,81 @@ pub fn app_name_from_path(path: &str) -> Option<String> {
     }
 }
 
+/// Last successfully read foreground app, served when the main thread is busy.
 #[cfg(target_os = "macos")]
-pub fn frontmost_app() -> ForegroundApp {
+static LAST_KNOWN: std::sync::RwLock<Option<ForegroundApp>> = std::sync::RwLock::new(None);
+
+/// Read the frontmost application. **Must run on the main thread** — see `frontmost_app`.
+#[cfg(target_os = "macos")]
+fn read_frontmost_on_main() -> ForegroundApp {
     use objc2_app_kit::NSWorkspace;
 
-    // `frontmostApplication` is a plain property read on a shared singleton and is safe to
-    // call from the clipboard thread; it does not require the main thread.
-    let workspace = unsafe { NSWorkspace::sharedWorkspace() };
-    let Some(app) = (unsafe { workspace.frontmostApplication() }) else {
-        return ForegroundApp::unknown();
+    // AppKit accessors hand back autoreleased temporaries. Without a pool on this thread they
+    // leak (and log "autoreleased with no pool in place") on every capture.
+    objc2::rc::autoreleasepool(|_| {
+        let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+        let Some(app) = (unsafe { workspace.frontmostApplication() }) else {
+            return ForegroundApp::unknown();
+        };
+
+        let process_path = unsafe { app.bundleURL() }
+            .and_then(|url| unsafe { url.path() })
+            .map(|path| path.to_string());
+        let app_name = unsafe { app.localizedName() }
+            .map(|name| name.to_string())
+            .or_else(|| process_path.as_deref().and_then(app_name_from_path))
+            .unwrap_or_else(|| UNKNOWN_APP.to_string());
+
+        ForegroundApp {
+            app_name,
+            process_path,
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub fn frontmost_app() -> ForegroundApp {
+    // This is called from the clipboard thread on every copy, but `NSWorkspace` is documented
+    // as thread-safe only for specific methods and `frontmostApplication` is not one of them —
+    // it performs synchronous IPC, so calling it off the main thread risks a hang that would
+    // silently kill clipboard capture for the rest of the session.
+    //
+    // Hop to the main thread with a deadline instead. If the main thread is busy we serve the
+    // previous value rather than block the capture pipeline: a slightly stale source app is a
+    // far better failure mode than a stalled clipboard.
+    let cached = || {
+        LAST_KNOWN
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(ForegroundApp::unknown)
     };
 
-    let process_path = unsafe { app.bundleURL() }
-        .and_then(|url| unsafe { url.path() })
-        .map(|path| path.to_string());
-    let app_name = unsafe { app.localizedName() }
-        .map(|name| name.to_string())
-        .or_else(|| process_path.as_deref().and_then(app_name_from_path))
-        .unwrap_or_else(|| UNKNOWN_APP.to_string());
+    let Some(app_handle) = crate::GLOBAL_APP_HANDLE.get() else {
+        return cached();
+    };
 
-    ForegroundApp {
-        app_name,
-        process_path,
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dispatched = {
+        use tauri::Manager;
+        app_handle
+            .run_on_main_thread(move || {
+                let _ = tx.send(read_frontmost_on_main());
+            })
+            .is_ok()
+    };
+    if !dispatched {
+        return cached();
+    }
+
+    match rx.recv_timeout(std::time::Duration::from_millis(150)) {
+        Ok(app) => {
+            if let Ok(mut guard) = LAST_KNOWN.write() {
+                *guard = Some(app.clone());
+            }
+            app
+        }
+        Err(_) => cached(),
     }
 }
 
