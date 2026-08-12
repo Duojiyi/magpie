@@ -925,7 +925,13 @@ mod migration_log_and_tmp_tests {
     // Requirements 6.2：tmp 建在 %APPDATA% 同卷（与目标同父目录），保证后续为同卷原子重命名。
     #[test]
     fn tmp_目录与目标同父同卷() {
-        let target = PathBuf::from(r"C:\Users\tester\AppData\Roaming\app.magpie");
+        // 路径按平台构造：`\` 在 Unix 上是普通字符，硬编码 Windows 字面量会让整串被当成
+        // 单个文件名，file_name() 取不到 "app.magpie"，断言随之失败。
+        let target: PathBuf = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\tester\AppData\Roaming\app.magpie")
+        } else {
+            PathBuf::from("/home/tester/.local/share/app.magpie")
+        };
         let tmp = tmp_dir_for(&target);
         assert_eq!(
             tmp.parent(),
