@@ -129,5 +129,13 @@ pub fn encrypt_value(plain: &str) -> Option<String> {
 
 #[cfg(not(windows))]
 pub fn decrypt_value(cipher: &str) -> Option<String> {
+    // DPAPI is Windows-only, so a `dpapi:` payload here came from a Windows install (a copied
+    // data directory, or a synced settings snapshot) and genuinely cannot be decrypted on this
+    // machine. Returning it unchanged used to surface the literal ciphertext (`dpapi:AQAAA...`)
+    // to the user as if it were their API key. `None` is the honest answer, and callers already
+    // treat it as "stored but unreadable".
+    if cipher.starts_with(ENCRYPT_PREFIX) {
+        return None;
+    }
     Some(cipher.to_string())
 }

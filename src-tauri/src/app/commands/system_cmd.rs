@@ -15,71 +15,43 @@ pub fn get_data_path(state: State<'_, AppDataDir>) -> AppResult<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+// These four used to hand-roll `explorer` / `open` invocations with no Linux branch at all,
+// so on Linux the command bodies compiled down to `Ok(())` — the UI reported success and
+// nothing opened. tauri-plugin-opener (already a dependency and already permitted in the
+// capability set) implements all three platforms, including `xdg-open`.
+
 #[tauri::command]
-pub fn open_folder(path: String) -> AppResult<()> {
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg(path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open folder: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg(path)
-        .spawn()
+pub fn open_folder(app: AppHandle, path: String) -> AppResult<()> {
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path, None::<&str>)
         .map_err(|e| AppError::Internal(format!("Failed to open folder: {}", e)))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_data_folder(state: State<'_, AppDataDir>) -> AppResult<()> {
-    let path = state.0.lock().unwrap();
-    let path_str = path.to_string_lossy().to_string();
-
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg(path_str)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open data folder: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg(path_str)
-        .spawn()
+pub fn open_data_folder(app: AppHandle, state: State<'_, AppDataDir>) -> AppResult<()> {
+    let path_str = {
+        let path = state.0.lock().unwrap();
+        path.to_string_lossy().to_string()
+    };
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path_str, None::<&str>)
         .map_err(|e| AppError::Internal(format!("Failed to open data folder: {}", e)))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_file_with_default_app(file_path: String) -> AppResult<()> {
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg(&file_path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg(&file_path)
-        .spawn()
+pub fn open_file_with_default_app(app: AppHandle, file_path: String) -> AppResult<()> {
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(file_path, None::<&str>)
         .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_file_location(file_path: String) -> AppResult<()> {
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg("/select,")
-        .arg(&file_path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg("-R")
-        .arg(&file_path)
-        .spawn()
+pub fn open_file_location(app: AppHandle, file_path: String) -> AppResult<()> {
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .reveal_item_in_dir(&file_path)
         .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
     Ok(())
 }

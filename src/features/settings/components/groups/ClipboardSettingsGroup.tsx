@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { ChevronDown, ChevronRight, RotateCcw, Clipboard } from "lucide-react";
 import { getHotkeyDisplayTokens } from "../../../../shared/lib/hotkeyDisplay";
-import { isMacPlatform } from "../../../../shared/lib/platform";
+import { detectPlatform, isMacPlatform, isWindowsPlatform } from "../../../../shared/lib/platform";
 import type { QuickPasteModifier } from "../../../app/types";
 import type { HotkeyScope } from "../../../../shared/hooks/useHotkeyConfig";
 import {
@@ -118,7 +118,15 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
     const [maskSettingsOpen, setMaskSettingsOpen] = useState(false);
 
     // Win+V 接管（仅 Windows，需求 24）
-    const isWindows = !isMacPlatform();
+    // 必须用「是不是 Windows」判定，而不是「不是 macOS」：后者会把 Linux 也算成 Windows，
+    // 于是 Linux 上会显示 Win+V 接管开关，而它调用的注册表命令在那边是空实现。
+    // 平台以后端 get_platform_info 为准（UA 无法区分 Linux 与 Windows），首帧先用同步猜测。
+    const [isWindows, setIsWindows] = useState(isWindowsPlatform());
+    useEffect(() => {
+        detectPlatform()
+            .then((platform) => setIsWindows(platform === "windows"))
+            .catch(() => undefined);
+    }, []);
     const [winVTakeover, setWinVTakeover] = useState(false);
     // 冲突确认提示的可见性（组件内会话标志由 winVConflictDismissedThisSession 控制是否允许弹出）
     const [winVConflictPrompt, setWinVConflictPrompt] = useState<string | null>(null);

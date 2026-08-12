@@ -435,6 +435,21 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
 async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult<()> {
     #[cfg(not(target_os = "windows"))]
     {
+        // Hand focus back to the app the user copied from, before the paste chord fires.
+        // There is no portable "re-activate that specific window" primitive, but hiding
+        // ourselves achieves it: both macOS and X11 window managers return focus to the
+        // previously active window when the focused one disappears. Without this the
+        // simulated Cmd/Ctrl+V lands in Magpie's own search box (the symptom upstream
+        // issue #86 describes on Windows).
+        use tauri::Manager;
+        if let Some(window) = _app_handle.get_webview_window("main") {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.hide();
+                crate::IS_HIDDEN.store(false, Ordering::Relaxed);
+            }
+        }
+        // Let the compositor settle the focus change before synthesising input.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
         return Ok(());
     }
 
@@ -1379,13 +1394,25 @@ pub fn send_paste_keystroke(method: &str, content: Option<&str>, content_type: O
 
     #[cfg(not(target_os = "windows"))]
     {
-        std::process::Command::new("osascript")
-            .args([
-                "-e",
-                "tell application \"System Events\" to keystroke \"v\" using command down",
-            ])
-            .spawn()
-            .ok();
+        let _ = content_type;
+        // "game_mode" types the text directly (matching the Windows semantics of that
+        // method); everything else sends the platform's paste chord. Failures are logged
+        // with an actionable hint instead of being discarded — the old fire-and-forget
+        // osascript made paste fail silently on every Linux box and on Macs without the
+        // Accessibility permission.
+        let outcome = match (method, content) {
+            ("game_mode", Some(text)) if !text.is_empty() => {
+                crate::infrastructure::portable_input::type_text(text)
+            }
+            _ => crate::infrastructure::portable_input::paste_combo(),
+        };
+        if let Err(err) = outcome {
+            crate::error!(
+                "[PASTE] simulated paste failed: {}; {}",
+                err,
+                crate::infrastructure::portable_input::paste_failure_hint()
+            );
+        }
     }
 }
 

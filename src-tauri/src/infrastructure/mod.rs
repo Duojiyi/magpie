@@ -1,4 +1,6 @@
 pub mod encryption;
+pub mod portable_clipboard;
+pub mod portable_input;
 pub mod repository;
 #[cfg(target_os = "windows")]
 pub mod windows_ext;
@@ -6,9 +8,18 @@ pub mod windows_ext;
 #[cfg(target_os = "windows")]
 pub mod windows_api;
 
+/// Non-Windows implementation of the `windows_api` surface.
+///
+/// Keeps the exact module path and signatures of the Windows implementation so the ~1200
+/// call sites need no platform branches, but the clipboard entry points now delegate to
+/// `infrastructure::portable_clipboard` (NSPasteboard / X11) instead of silently succeeding
+/// as no-ops. Anything still stubbed below either has no portable equivalent (private OLE
+/// formats) or is a Windows-only concept.
 #[cfg(not(target_os = "windows"))]
 pub mod windows_api {
     pub mod win_clipboard {
+        use crate::infrastructure::portable_clipboard as portable;
+
         #[derive(Clone)]
         pub struct ImageData {
             pub width: usize,
@@ -22,28 +33,35 @@ pub mod windows_api {
             pub data: Vec<u8>,
         }
 
-        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-
+        /// Stable between clipboard changes (bumped by the change watcher), restoring the
+        /// "same sequence → skip re-capture" debounce that the old always-incrementing stub
+        /// defeated.
         pub fn get_clipboard_sequence_number() -> u32 {
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            portable::change_sequence()
         }
 
         pub unsafe fn clear_clipboard() -> Result<(), String> {
-            Ok(())
+            portable::clear()
         }
 
         pub unsafe fn get_clipboard_image() -> Option<ImageData> {
-            None
+            portable::get_image_rgba().map(|(width, height, bytes)| ImageData {
+                width,
+                height,
+                bytes,
+            })
         }
 
         pub unsafe fn get_clipboard_files() -> Option<Vec<String>> {
-            None
+            portable::get_files()
         }
 
-        pub unsafe fn get_clipboard_raw_format(_name: &str) -> Option<Vec<u8>> {
-            None
+        pub unsafe fn get_clipboard_raw_format(name: &str) -> Option<Vec<u8>> {
+            portable::get_raw_format(name)
         }
 
+        /// Private named formats are a Windows/OLE concept; there is nothing equivalent to
+        /// enumerate on NSPasteboard/X11 that the preservation pipeline could round-trip.
         pub unsafe fn get_named_clipboard_formats(
             _max_formats: usize,
             _max_format_bytes: usize,
@@ -53,19 +71,23 @@ pub mod windows_api {
             Vec::new()
         }
 
-        pub unsafe fn set_clipboard_files(_paths: Vec<String>) -> Result<(), String> {
-            Ok(())
+        pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
+            portable::set_files(paths)
         }
 
-        pub unsafe fn set_clipboard_text_and_html(_text: &str, _: &str) -> Result<(), String> {
-            Ok(())
+        pub unsafe fn set_clipboard_text_and_html(
+            text: &str,
+            cf_html: &str,
+        ) -> Result<(), String> {
+            portable::set_rich_content(text, cf_html, None)
         }
 
         pub unsafe fn append_clipboard_text_and_html(
-            _text: &str,
-            _cf_html: &str,
+            text: &str,
+            cf_html: &str,
         ) -> Result<(), String> {
-            Ok(())
+            // No append semantics on these pasteboards; a full rewrite is the closest match.
+            portable::set_rich_content(text, cf_html, None)
         }
 
         pub unsafe fn append_named_clipboard_formats(
@@ -75,26 +97,34 @@ pub mod windows_api {
         }
 
         pub unsafe fn set_clipboard_image_and_gif(
-            _data: ImageData,
+            data: ImageData,
             _gif_bytes: Option<&[u8]>,
         ) -> Result<(), String> {
-            Ok(())
+            portable::set_image_rgba(data.width, data.height, &data.bytes)
         }
 
+        /// The `Option<String>` return mirrors the Windows contract, where it carries the
+        /// path of a GIF temp file written for CF_HDROP consumers. No such file exists on
+        /// these platforms, so it is always `None`.
         pub unsafe fn set_clipboard_image_with_formats(
-            _data: ImageData,
+            data: ImageData,
             _gif_data: Option<&[u8]>,
             _png_data: Option<&[u8]>,
         ) -> Result<Option<String>, String> {
+            portable::set_image_rgba(data.width, data.height, &data.bytes)?;
             Ok(None)
         }
 
         pub unsafe fn set_clipboard_rich_content(
-            _image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
-            _text: &str,
-            _cf_html: &str,
+            image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
+            text: &str,
+            cf_html: &str,
             _named_formats: &[NamedClipboardFormat],
         ) -> Result<Option<String>, String> {
+            let image = image_formats
+                .as_ref()
+                .map(|(image, _, _)| (image.width, image.height, image.bytes.as_slice()));
+            portable::set_rich_content(text, cf_html, image)?;
             Ok(None)
         }
     }
