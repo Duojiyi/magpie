@@ -152,20 +152,13 @@ fn capture_clipboard_snapshot() -> ClipboardSnapshot {
 async fn restore_clipboard_snapshot(snapshot: ClipboardSnapshot) -> AppResult<()> {
     match snapshot {
         ClipboardSnapshot::Empty => {
-            #[cfg(target_os = "windows")]
+            // clear_clipboard() is a real implementation on every platform now. The previous
+            // non-Windows path wrote an empty string instead, which leaves us owning an
+            // "empty text" selection rather than actually clearing.
             unsafe {
                 crate::infrastructure::windows_api::win_clipboard::clear_clipboard()
                     .map_err(AppError::Internal)?;
             }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                let mut clipboard = arboard::Clipboard::new().map_err(AppError::from)?;
-                clipboard
-                    .set_text(String::new())
-                    .map_err(|e| AppError::Internal(format!("Clipboard error: {}", e)))?;
-            }
-
             Ok(())
         }
         ClipboardSnapshot::Text { text, html } => {
@@ -179,7 +172,15 @@ async fn restore_clipboard_snapshot(snapshot: ClipboardSnapshot) -> AppResult<()
             prepare_clipboard_payload(&data_url, "image", None, false).await
         }
         ClipboardSnapshot::Files { paths } => {
-            prepare_clipboard_payload(&paths.join("\n"), "file", None, false).await
+            // Restore the list directly. Routing it through prepare_clipboard_payload joined
+            // the paths with newlines into one string, which the "file" branch then treats as
+            // a *single* path — so restoring a multi-file clipboard produced one nonsense
+            // entry. Unreachable off Windows before the snapshot gates were removed.
+            unsafe {
+                crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(paths)
+                    .map_err(AppError::Internal)?;
+            }
+            Ok(())
         }
     }
 }
@@ -447,12 +448,11 @@ async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult
         // Hand focus back to the app the user copied from, before the paste chord fires.
         // There is no portable "re-activate that specific window" primitive.
         //
-        // A pinned window must stay put: hiding it would make it vanish on every paste,
-        // which is the opposite of what pinning means.
-        if crate::WINDOW_PINNED.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
+        // Pinned included. Skipping the handoff entirely (an earlier attempt at preserving
+        // "pinned stays visible") means we keep focus and the synthesised chord is delivered
+        // to Magpie itself, so pinned paste silently does nothing. Off Windows there is no
+        // way to be both focused-elsewhere and visible, so correctness wins: hide now, and
+        // hide_window_after_paste brings a pinned window straight back.
         use tauri::Manager;
         #[cfg(target_os = "macos")]
         {
@@ -1056,10 +1056,23 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
         // In pinned mode, keep window non-focusable and restore focus back to last app.
         // Windows only — see the note in handle_window_focus_for_paste.
         #[cfg(target_os = "windows")]
-        if let Some(window) = app_handle.get_webview_window("main") {
-            let _ = window.set_focusable(false);
+        {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.set_focusable(false);
+            }
+            let _ = restore_focus_before_paste(app_handle).await;
         }
-        let _ = restore_focus_before_paste(app_handle).await;
+        // Off Windows the handoff had to hide us (there is no visible-but-unfocused state),
+        // so bring a pinned window back now that the paste has been delivered. Calling the
+        // handoff again here would just hide it a second time.
+        #[cfg(not(target_os = "windows"))]
+        {
+            #[cfg(target_os = "macos")]
+            let _ = app_handle.show();
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+            }
+        }
         return;
     }
 

@@ -619,7 +619,13 @@ fn setup_main_window(app: &App, s: &StartupSettings) {
             }
         }
         let _ = window.set_always_on_top(effective_pinned);
+        // Windows pairs non-focusable with WS_EX_NOACTIVATE below. Elsewhere it just sticks,
+        // so a user whose pinned preference is saved would start up with a visible window
+        // that refuses all keyboard input until they happen to click it.
+        #[cfg(windows)]
         let _ = window.set_focusable(!effective_pinned);
+        #[cfg(not(windows))]
+        let _ = window.set_focusable(true);
 
         #[cfg(windows)]
         if let Ok(hwnd) = window.hwnd() {
@@ -1264,7 +1270,10 @@ fn setup_tray(app: &App, hide_tray: bool) {
                 if let Some(window) = app.get_webview_window("main") {
                     // Off Windows, focusability is a sticky GTK/AppKit property that the hide
                     // paths may have cleared; showing without restoring it yields a visible
-                    // window that refuses all keyboard input.
+                    // window that refuses all keyboard input. On macOS the app itself may be
+                    // hidden by the paste path, and a hidden app's windows never appear.
+                    #[cfg(target_os = "macos")]
+                    let _ = app.show();
                     #[cfg(not(target_os = "windows"))]
                     let _ = window.set_focusable(true);
                     let _ = window.show();
@@ -1283,7 +1292,9 @@ fn setup_tray(app: &App, hide_tray: bool) {
             {
                 if let Some(window) = tray.app_handle().get_webview_window("main") {
                     // See the note in the "show" menu handler: set_focus() alone is not enough
-                    // when the window was left non-focusable.
+                    // when the window was left non-focusable or the app was hidden.
+                    #[cfg(target_os = "macos")]
+                    let _ = tray.app_handle().show();
                     #[cfg(not(target_os = "windows"))]
                     let _ = window.set_focusable(true);
                     let _ = window.show();

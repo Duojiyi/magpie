@@ -448,6 +448,12 @@ pub fn toggle_window(app: &AppHandle) {
             // Show *and* focus. Without the Win32 no-activate trick the only way the user can
             // type in the search box or drive the list with the arrow keys is for the window
             // to actually take focus.
+            //
+            // The unhide is required: the paste path hides the whole application on macOS
+            // (activation there is per-app), and a hidden app's windows stay invisible no
+            // matter how often `show()` is called on them.
+            #[cfg(target_os = "macos")]
+            let _ = app.show();
             let _ = window.set_focusable(true);
             let _ = window.show();
             let _ = window.set_focus();
@@ -473,6 +479,9 @@ pub fn set_navigation_mode(active: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window("main") {
+        // See toggle_window: on macOS the app itself may be hidden by the paste path.
+        #[cfg(target_os = "macos")]
+        let _ = app_handle.show();
         let _ = window.set_focusable(true);
 
         #[cfg(windows)]
@@ -522,6 +531,9 @@ pub fn toggle_window_cmd(app_handle: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn focus_clipboard_window(app_handle: AppHandle) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window("main") {
+        // See toggle_window: on macOS the app itself may be hidden by the paste path.
+        #[cfg(target_os = "macos")]
+        let _ = app_handle.show();
         let _ = window.set_focusable(true);
         let _ = window.show();
 

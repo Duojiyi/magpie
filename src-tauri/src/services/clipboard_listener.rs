@@ -92,19 +92,29 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
         // No unwrap anywhere on this path: with `panic = "abort"` a missing display server
         // would otherwise abort the entire app. If the watcher can't start, degrade to
         // text-only polling, which retries clipboard access internally.
-        match crate::infrastructure::portable_clipboard::run_change_watcher(callback.clone()) {
-            Ok(()) => {
-                // The platform watch loop only ends when the platform stops it, which we never
-                // ask for — worth noting, but not an error condition.
-                crate::info!("[CLIPBOARD] change watcher loop exited; monitoring stopped");
+        // Keep retrying the event-driven watcher. An autostarted app frequently loses the
+        // race with the display server, and a one-shot fallback would strand the whole
+        // session in text-only polling — silently losing image/file/HTML capture, which is
+        // most of what this backend exists for.
+        loop {
+            match crate::infrastructure::portable_clipboard::run_change_watcher(callback.clone()) {
+                Ok(()) => {
+                    // The platform loop only ends when the platform stops it, which we never
+                    // ask for. Not an error, but nothing is watching any more.
+                    crate::info!("[CLIPBOARD] change watcher loop exited; restarting");
+                }
+                Err(err) => {
+                    crate::error!(
+                        "[CLIPBOARD] change watcher unavailable ({}); text-only polling for now",
+                        err
+                    );
+                    crate::infrastructure::portable_clipboard::run_polling_watcher_for(
+                        callback.clone(),
+                        std::time::Duration::from_secs(30),
+                    );
+                }
             }
-            Err(err) => {
-                crate::error!(
-                    "[CLIPBOARD] change watcher unavailable ({}); falling back to text polling",
-                    err
-                );
-                crate::infrastructure::portable_clipboard::run_polling_watcher(callback);
-            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
         }
     });
 }

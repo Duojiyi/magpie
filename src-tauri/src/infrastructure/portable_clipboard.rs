@@ -307,12 +307,21 @@ pub fn run_change_watcher(callback: Arc<dyn Fn() + Send + Sync + 'static>) -> Re
 
 /// Fallback change detector for environments where the watcher cannot start. Text-hash based;
 /// bumps the sequence number itself so debouncing still works.
-pub fn run_polling_watcher(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
+///
+/// Returns after roughly `budget`, so the caller can retry the (much better) event-driven
+/// watcher. The display server often simply is not up yet when an autostarted app launches,
+/// and staying in text-only polling for the rest of the session would permanently lose
+/// image/file/HTML capture.
+pub fn run_polling_watcher_for(
+    callback: Arc<dyn Fn() + Send + Sync + 'static>,
+    budget: std::time::Duration,
+) {
     use std::hash::{Hash, Hasher};
 
+    let deadline = std::time::Instant::now() + budget;
     let mut clipboard = None;
     let mut last_hash = 0u64;
-    loop {
+    while std::time::Instant::now() < deadline {
         if clipboard.is_none() {
             // Never unwrap here: with `panic = "abort"` a missing display server would take
             // the whole app down. Keep retrying instead; clipboard capture simply stays off
