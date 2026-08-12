@@ -4,6 +4,14 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.1] - 2026-08-12
+
+> 修复 v0.5.0 的 macOS 发布构建回归。功能与 v0.5.0 相同。
+
+### 修复
+
+- **macOS 构建**：为非 Windows 平台补上 `set_clipboard_rich_content` 桩函数。v0.5.0 引入的"单事务富文本写入"只在 Windows 的 `win_clipboard` 模块中定义了该函数，非 Windows 桩模块漏补，导致 macOS `cargo check` 报 `E0425` 失败、发布工作流的 macOS bundle 未能产出（Windows 包不受影响）。非 Windows 平台行为与此前一致（富文本写入在该平台为 no-op）。
+
 ## [0.5.0] - 2026-08-12
 
 > 主题：**安全加固与稳定性专项**。基于一轮完整的前端 + 后端 + 网络面审计，修复了一批崩溃、死锁、局域网/剪贴板安全与数据完整性问题；全部改动向后兼容，未改变云同步 / 设备配对协议。

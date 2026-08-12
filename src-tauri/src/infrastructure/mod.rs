@@ -87,6 +87,15 @@ pub mod windows_api {
         ) -> Result<Option<String>, String> {
             Ok(None)
         }
+
+        pub unsafe fn set_clipboard_rich_content(
+            _image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
+            _text: &str,
+            _cf_html: &str,
+            _named_formats: &[NamedClipboardFormat],
+        ) -> Result<Option<String>, String> {
+            Ok(None)
+        }
     }
 
     pub mod window_tracker {
