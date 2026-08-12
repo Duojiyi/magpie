@@ -147,6 +147,45 @@ fn is_rtf_format_name(name: &str) -> bool {
     lower == "rich text format" || lower == "text/rtf" || lower == "rtf"
 }
 
+fn is_gif_format_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    lower == "gif" || lower == "animated gif" || lower == "image/gif"
+}
+
+/// Platform-native identifier for GIF data: a UTI on macOS, a MIME-typed selection target on
+/// X11. Needed because the pipeline asks for GIF by its Windows name.
+fn native_gif_format() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "com.compuserve.gif"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "image/gif"
+    }
+}
+
+/// Formats we already read and write through dedicated paths. Re-preserving them as opaque
+/// "named formats" would write the same payload twice and, on paste, fight the typed writes.
+fn is_natively_handled_format(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    is_html_format_name(&lower)
+        || is_rtf_format_name(&lower)
+        || is_png_format_name(&lower)
+        || is_gif_format_name(&lower)
+        || lower.starts_with("public.")
+        || lower.starts_with("text/")
+        || lower.starts_with("image/")
+        || lower.contains("utf8_string")
+        || lower.contains("string")
+        || lower.contains("targets")
+        || lower.contains("timestamp")
+        || lower.contains("multiple")
+        || lower.contains("save_targets")
+        || lower.contains("uri-list")
+        || lower.contains("filenames")
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -177,12 +216,25 @@ pub fn get_files() -> Option<Vec<String>> {
 /// return `None`, which callers already treat as "format not present".
 pub fn get_raw_format(name: &str) -> Option<Vec<u8>> {
     // Match the name *before* touching the clipboard. The capture pipeline probes ~10 format
-    // names per copy and we recognise three of them; acquiring the connection first would make
+    // names per copy and we recognise a few of them; acquiring the connection first would make
     // the majority of calls pure overhead.
-    if !is_html_format_name(name) && !is_rtf_format_name(name) && !is_png_format_name(name) {
+    if !is_html_format_name(name)
+        && !is_rtf_format_name(name)
+        && !is_png_format_name(name)
+        && !is_gif_format_name(name)
+    {
         return None;
     }
     let ctx = ctx().ok()?;
+    if is_gif_format_name(name) {
+        // Serve the original GIF bytes so animation survives. Without this the pipeline falls
+        // through to the still-image path, which re-encodes to PNG and freezes the first frame.
+        let raw = ctx.get_buffer(native_gif_format()).ok()?;
+        if raw.len() > 6 && (raw.starts_with(b"GIF87a") || raw.starts_with(b"GIF89a")) {
+            return Some(raw);
+        }
+        return None;
+    }
     if is_html_format_name(name) {
         let html = ctx.get_html().ok()?;
         if html.trim().is_empty() {
@@ -244,9 +296,10 @@ pub fn set_rich_content(
     text: &str,
     cf_html: &str,
     image: Option<(usize, usize, &[u8])>,
+    named_formats: &[(String, Vec<u8>)],
 ) -> Result<(), String> {
     let fragment = extract_fragment_from_cf_html(cf_html);
-    let mut contents: Vec<ClipboardContent> = Vec::with_capacity(3);
+    let mut contents: Vec<ClipboardContent> = Vec::with_capacity(3 + named_formats.len());
     if let Some((width, height, rgba)) = image {
         contents.push(ClipboardContent::Image(rgba_to_rust_image(
             width, height, rgba,
@@ -258,10 +311,60 @@ pub fn set_rich_content(
     if !text.is_empty() {
         contents.push(ClipboardContent::Text(text.to_string()));
     }
+    // Application-private formats (an Office table's native representation, say) ride along in
+    // the *same* write. Writing them afterwards would not work: a second write replaces the
+    // selection rather than adding to it, so it would drop the text and HTML we just set.
+    for (name, data) in named_formats {
+        if !is_natively_handled_format(name) && !data.is_empty() {
+            contents.push(ClipboardContent::Other(name.clone(), data.clone()));
+        }
+    }
     if contents.is_empty() {
         return Err("nothing to write".to_string());
     }
     ctx()?.set(contents).map_err(|e| e.to_string())
+}
+
+/// Enumerate application-private clipboard formats worth preserving for a round trip.
+///
+/// `keep` receives each platform format identifier (a UTI on macOS, a selection target name on
+/// X11). Formats we already handle through typed paths are excluded so they are not stored and
+/// replayed twice.
+pub fn get_named_formats(
+    max_formats: usize,
+    max_format_bytes: usize,
+    max_total_bytes: usize,
+    keep: &dyn Fn(&str) -> bool,
+) -> Vec<(String, Vec<u8>)> {
+    let Ok(ctx) = ctx() else {
+        return Vec::new();
+    };
+    let Ok(formats) = ctx.available_formats() else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut total = 0usize;
+    for name in formats {
+        if out.len() >= max_formats {
+            break;
+        }
+        if is_natively_handled_format(&name) || !keep(&name) {
+            continue;
+        }
+        let Ok(data) = ctx.get_buffer(&name) else {
+            continue;
+        };
+        if data.is_empty() || data.len() > max_format_bytes {
+            continue;
+        }
+        if total.saturating_add(data.len()) > max_total_bytes {
+            continue;
+        }
+        total = total.saturating_add(data.len());
+        out.push((name, data));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +388,67 @@ impl ClipboardHandler for WatcherHandler {
 /// selection-owner events on X11 — both of which observe image/file/HTML changes that the old
 /// "poll `get_text` every 500 ms" loop was blind to. Returns `Err` when no watcher could be
 /// established (e.g. no display server) so the caller can fall back to polling.
+/// Linux clipboard change watcher, implemented directly on XFixes.
+///
+/// Deliberately not clipboard-rs's watcher: that one `.expect()`s its way through connecting,
+/// negotiating XFixes, and every `poll_for_event`. Under `panic = "abort"` each of those turns
+/// a recoverable condition into "the whole app dies" — including the entirely routine case of
+/// the X server closing the connection when the user logs out, where every other application
+/// exits cleanly. Owning the loop lets every failure become an ordinary `Err`.
+#[cfg(target_os = "linux")]
+fn run_x11_change_watcher(callback: &Arc<dyn Fn() + Send + Sync + 'static>) -> Result<(), String> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xfixes::{self, ConnectionExt as XfixesConnectionExt, SelectionEventMask};
+    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
+    use x11rb::protocol::Event;
+
+    let (conn, screen_num) = x11rb::connect(None).map_err(|e| format!("x11 connect: {}", e))?;
+    let root = conn
+        .setup()
+        .roots
+        .get(screen_num)
+        .ok_or_else(|| "x11: no such screen".to_string())?
+        .root;
+
+    // XFixes must be version-negotiated before any of its requests may be used.
+    xfixes::query_version(&conn, 5, 0)
+        .map_err(|e| format!("x11 xfixes query: {}", e))?
+        .reply()
+        .map_err(|e| format!("x11 xfixes unavailable: {}", e))?;
+
+    let clipboard = conn
+        .intern_atom(false, b"CLIPBOARD")
+        .map_err(|e| format!("x11 intern CLIPBOARD: {}", e))?
+        .reply()
+        .map_err(|e| format!("x11 intern CLIPBOARD: {}", e))?
+        .atom;
+
+    xfixes::select_selection_input(
+        &conn,
+        root,
+        clipboard,
+        SelectionEventMask::SET_SELECTION_OWNER,
+    )
+    .map_err(|e| format!("x11 select selection input: {}", e))?
+    .check()
+    .map_err(|e| format!("x11 select selection input: {}", e))?;
+
+    conn.flush().map_err(|e| format!("x11 flush: {}", e))?;
+
+    loop {
+        match conn.wait_for_event() {
+            Ok(Event::XfixesSelectionNotify(_)) => {
+                bump_change_sequence();
+                callback();
+            }
+            Ok(_) => {}
+            // Connection lost (X server shutdown, logout, network X). Report it; the caller
+            // retries, and if the server is really gone the process is exiting anyway.
+            Err(err) => return Err(format!("x11 connection lost: {}", err)),
+        }
+    }
+}
+
 pub fn run_change_watcher(callback: Arc<dyn Fn() + Send + Sync + 'static>) -> Result<(), String> {
     // Probe first. `ClipboardWatcherContext::new()` only allocates a channel and always
     // succeeds; the X11 backend does its real connecting *inside* `start_watch()` — with
@@ -293,16 +457,26 @@ pub fn run_change_watcher(callback: Arc<dyn Fn() + Send + Sync + 'static>) -> Re
     // unreachable. Establishing a normal connection first tells us whether start_watch can
     // safely run.
     // Drop the guard immediately: the watcher's callback re-enters this module to read the
-    // clipboard, so holding the connection lock across `start_watch()` would deadlock on the
+    // clipboard, so holding the connection lock across the watch loop would deadlock on the
     // first change event.
     drop(ctx().map_err(|e| format!("clipboard watcher precondition failed: {}", e))?);
 
-    let mut watcher: ClipboardWatcherContext<WatcherHandler> = ClipboardWatcherContext::new()
-        .map_err(|e| format!("clipboard watcher unavailable: {}", e))?;
-    watcher.add_handler(WatcherHandler { callback });
-    // Blocking; only returns if the platform loop stops on its own.
-    watcher.start_watch();
-    Ok(())
+    #[cfg(target_os = "linux")]
+    {
+        return run_x11_change_watcher(&callback);
+    }
+
+    // macOS: clipboard-rs polls NSPasteboard's changeCount and contains no panicking paths,
+    // so its watcher is safe to use as-is.
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut watcher: ClipboardWatcherContext<WatcherHandler> = ClipboardWatcherContext::new()
+            .map_err(|e| format!("clipboard watcher unavailable: {}", e))?;
+        watcher.add_handler(WatcherHandler { callback });
+        // Blocking; only returns if the platform loop stops on its own.
+        watcher.start_watch();
+        Ok(())
+    }
 }
 
 /// Fallback change detector for environments where the watcher cannot start. Text-hash based;

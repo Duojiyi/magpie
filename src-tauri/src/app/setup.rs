@@ -70,6 +70,10 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     crate::logger::init(app_dir.join("tiez.log"));
     info!(">>> [STARTUP] Magpie starting up...");
 
+    // Sensitive values are encrypted at rest. Windows uses DPAPI; elsewhere a key file that
+    // lives beside the database, so it must be located before anything reads settings.
+    crate::infrastructure::encryption::init_portable_key_dir(app_dir.clone());
+
     // 3. Database Initialization
     let db_path = app_dir.join("clipboard.db");
     let db_path_str = db_path.to_string_lossy();

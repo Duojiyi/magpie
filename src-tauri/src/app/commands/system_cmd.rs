@@ -1,5 +1,4 @@
 use crate::app_state::AppDataDir;
-use crate::database::ENCRYPT_PREFIX;
 use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json;
@@ -956,15 +955,18 @@ fn rewrite_content_path(
         None
     };
 
-    if value.starts_with(ENCRYPT_PREFIX) {
+    if crate::database::encryption::is_encrypted_payload(value) {
         #[cfg(not(feature = "portable"))]
         {
-            let plain = crate::database::encryption::decrypt_value(value)
-                .unwrap_or_else(|| value.to_string());
-            if let Some(updated_plain) = replace_prefix(&plain) {
-                let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
-                    .unwrap_or(updated_plain);
-                return Some(encrypted);
+            // Only rewrite when we could actually read the value. Falling back to the raw
+            // ciphertext (as `unwrap_or_else` did) would re-encrypt the ciphertext itself and
+            // permanently lose the original.
+            if let Some(plain) = crate::database::encryption::decrypt_value(value) {
+                if let Some(updated_plain) = replace_prefix(&plain) {
+                    let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
+                        .unwrap_or(updated_plain);
+                    return Some(encrypted);
+                }
             }
         }
         return None;
@@ -990,15 +992,16 @@ fn rewrite_html_paths(
         }
     };
 
-    if value.starts_with(ENCRYPT_PREFIX) {
+    if crate::database::encryption::is_encrypted_payload(value) {
         #[cfg(not(feature = "portable"))]
         {
-            let plain = crate::database::encryption::decrypt_value(value)
-                .unwrap_or_else(|| value.to_string());
-            if let Some(updated_plain) = replace_any(&plain) {
-                let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
-                    .unwrap_or(updated_plain);
-                return Some(encrypted);
+            // See the note above: never re-encrypt a value we failed to decrypt.
+            if let Some(plain) = crate::database::encryption::decrypt_value(value) {
+                if let Some(updated_plain) = replace_any(&plain) {
+                    let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
+                        .unwrap_or(updated_plain);
+                    return Some(encrypted);
+                }
             }
         }
         return None;

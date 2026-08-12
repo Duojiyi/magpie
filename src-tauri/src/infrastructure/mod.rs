@@ -1,6 +1,7 @@
 pub mod encryption;
 pub mod portable_clipboard;
 pub mod portable_input;
+pub mod portable_window_tracker;
 pub mod repository;
 #[cfg(target_os = "windows")]
 pub mod windows_ext;
@@ -60,15 +61,19 @@ pub mod windows_api {
             portable::get_raw_format(name)
         }
 
-        /// Private named formats are a Windows/OLE concept; there is nothing equivalent to
-        /// enumerate on NSPasteboard/X11 that the preservation pipeline could round-trip.
+        /// Application-private formats, identified by UTI (macOS) or selection target (X11)
+        /// rather than by Windows format name. They round-trip within a platform, which is
+        /// the case that matters: copy from an app and paste back into it.
         pub unsafe fn get_named_clipboard_formats(
-            _max_formats: usize,
-            _max_format_bytes: usize,
-            _max_total_bytes: usize,
-            _keep: &dyn Fn(&str) -> bool,
+            max_formats: usize,
+            max_format_bytes: usize,
+            max_total_bytes: usize,
+            keep: &dyn Fn(&str) -> bool,
         ) -> Vec<NamedClipboardFormat> {
-            Vec::new()
+            portable::get_named_formats(max_formats, max_format_bytes, max_total_bytes, keep)
+                .into_iter()
+                .map(|(name, data)| NamedClipboardFormat { name, data })
+                .collect()
         }
 
         pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
@@ -79,7 +84,7 @@ pub mod windows_api {
             text: &str,
             cf_html: &str,
         ) -> Result<(), String> {
-            portable::set_rich_content(text, cf_html, None)
+            portable::set_rich_content(text, cf_html, None, &[])
         }
 
         pub unsafe fn append_clipboard_text_and_html(
@@ -87,7 +92,7 @@ pub mod windows_api {
             cf_html: &str,
         ) -> Result<(), String> {
             // No append semantics on these pasteboards; a full rewrite is the closest match.
-            portable::set_rich_content(text, cf_html, None)
+            portable::set_rich_content(text, cf_html, None, &[])
         }
 
         pub unsafe fn append_named_clipboard_formats(
@@ -119,34 +124,48 @@ pub mod windows_api {
             image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
             text: &str,
             cf_html: &str,
-            _named_formats: &[NamedClipboardFormat],
+            named_formats: &[NamedClipboardFormat],
         ) -> Result<Option<String>, String> {
             let image = image_formats
                 .as_ref()
                 .map(|(image, _, _)| (image.width, image.height, image.bytes.as_slice()));
-            portable::set_rich_content(text, cf_html, image)?;
+            let named: Vec<(String, Vec<u8>)> = named_formats
+                .iter()
+                .map(|f| (f.name.clone(), f.data.clone()))
+                .collect();
+            portable::set_rich_content(text, cf_html, image, &named)?;
             Ok(None)
         }
     }
 
     pub mod window_tracker {
+        use crate::infrastructure::portable_window_tracker as portable;
+
+        /// Windows installs a WinEvent hook here. macOS/Linux query the frontmost app on
+        /// demand instead, so there is nothing to start.
         pub fn start_window_tracking(_app_handle: tauri::AppHandle) {}
+
         #[derive(Debug, Clone, Default)]
         pub struct ActiveAppInfo {
             pub app_name: String,
             pub process_path: Option<String>,
         }
-        pub fn get_active_app_info() -> ActiveAppInfo {
+
+        fn from_portable(app: portable::ForegroundApp) -> ActiveAppInfo {
             ActiveAppInfo {
-                app_name: "FallbackApp".into(),
-                process_path: None,
+                app_name: app.app_name,
+                process_path: app.process_path,
             }
         }
+
+        pub fn get_active_app_info() -> ActiveAppInfo {
+            from_portable(portable::frontmost_app())
+        }
+
+        /// Neither platform exposes a clipboard *owner*, so the frontmost application is the
+        /// proxy — the same fallback Windows uses when `GetClipboardOwner` yields nothing.
         pub fn get_clipboard_source_app_info() -> ActiveAppInfo {
-            ActiveAppInfo {
-                app_name: "FallbackApp".into(),
-                process_path: None,
-            }
+            from_portable(portable::frontmost_app())
         }
     }
 

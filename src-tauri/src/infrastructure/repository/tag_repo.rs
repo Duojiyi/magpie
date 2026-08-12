@@ -1,4 +1,3 @@
-use crate::database::ENCRYPT_PREFIX;
 use crate::domain::models::ClipboardEntry;
 use crate::infrastructure::encryption;
 use rusqlite::{params, Connection};
@@ -27,7 +26,7 @@ impl SqliteTagRepository {
     }
 
     fn maybe_decrypt_text(&self, value: &str) -> String {
-        if value.starts_with(ENCRYPT_PREFIX) {
+        if encryption::is_encrypted_payload(value) {
             encryption::decrypt_value(value).unwrap_or_else(|| value.to_string())
         } else {
             value.to_string()

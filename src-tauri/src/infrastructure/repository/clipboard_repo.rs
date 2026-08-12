@@ -82,11 +82,11 @@ impl SqliteClipboardRepository {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2).ok(), row.get(3)?, row.get(4)?)),
             ).map_err(|e| e.to_string())?;
 
-        let already_encrypted = content_raw.starts_with(ENCRYPT_PREFIX)
-            && preview_raw.starts_with(ENCRYPT_PREFIX)
+        let already_encrypted = encryption::is_encrypted_payload(&content_raw)
+            && encryption::is_encrypted_payload(&preview_raw)
             && html_raw
                 .as_ref()
-                .map(|h| h.starts_with(ENCRYPT_PREFIX))
+                .map(|h| encryption::is_encrypted_payload(h))
                 .unwrap_or(true);
         if already_encrypted {
             return Ok(());
@@ -120,11 +120,11 @@ impl SqliteClipboardRepository {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2).ok(), row.get(3)?, row.get(4)?)),
             ).map_err(|e| e.to_string())?;
 
-        let any_encrypted = content_raw.starts_with(ENCRYPT_PREFIX)
-            || preview_raw.starts_with(ENCRYPT_PREFIX)
+        let any_encrypted = encryption::is_encrypted_payload(&content_raw)
+            || encryption::is_encrypted_payload(&preview_raw)
             || html_raw
                 .as_ref()
-                .map(|h| h.starts_with(ENCRYPT_PREFIX))
+                .map(|h| encryption::is_encrypted_payload(h))
                 .unwrap_or(false);
         if !any_encrypted {
             return Ok(());
@@ -214,7 +214,7 @@ impl SqliteClipboardRepository {
     fn maybe_encrypt_text(&self, value: &str) -> String {
         #[cfg(not(feature = "portable"))]
         {
-            if value.starts_with(ENCRYPT_PREFIX) {
+            if encryption::is_encrypted_payload(value) {
                 return value.to_string();
             }
             encryption::encrypt_value(value).unwrap_or_else(|| value.to_string())
@@ -226,7 +226,7 @@ impl SqliteClipboardRepository {
     }
 
     fn maybe_decrypt_text(&self, value: &str) -> String {
-        if value.starts_with(ENCRYPT_PREFIX) {
+        if encryption::is_encrypted_payload(value) {
             encryption::decrypt_value(value).unwrap_or_else(|| value.to_string())
         } else {
             value.to_string()
@@ -933,15 +933,15 @@ impl ClipboardRepository for SqliteClipboardRepository {
             #[cfg(not(feature = "portable"))]
             {
                 let is_sensitive = has_sensitive_tag(&entry.tags);
-                let content_encrypted = content_raw.starts_with(ENCRYPT_PREFIX);
-                let preview_encrypted = preview_raw.starts_with(ENCRYPT_PREFIX);
+                let content_encrypted = encryption::is_encrypted_payload(&content_raw);
+                let preview_encrypted = encryption::is_encrypted_payload(&preview_raw);
                 let html_encrypted = html_raw
                     .as_ref()
-                    .map(|h| h.starts_with(ENCRYPT_PREFIX))
+                    .map(|h| encryption::is_encrypted_payload(h))
                     .unwrap_or(false);
                 let html_needs_encrypt = html_raw
                     .as_ref()
-                    .map(|h| !h.starts_with(ENCRYPT_PREFIX))
+                    .map(|h| !encryption::is_encrypted_payload(h))
                     .unwrap_or(false);
 
                 if is_sensitive && (!content_encrypted || !preview_encrypted || html_needs_encrypt)
