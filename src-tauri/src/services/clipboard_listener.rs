@@ -94,7 +94,9 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
         // text-only polling, which retries clipboard access internally.
         match crate::infrastructure::portable_clipboard::run_change_watcher(callback.clone()) {
             Ok(()) => {
-                crate::error!("[CLIPBOARD] change watcher exited; monitoring stopped");
+                // The platform watch loop only ends when the platform stops it, which we never
+                // ask for — worth noting, but not an error condition.
+                crate::info!("[CLIPBOARD] change watcher loop exited; monitoring stopped");
             }
             Err(err) => {
                 crate::error!(

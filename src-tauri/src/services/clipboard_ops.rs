@@ -75,8 +75,15 @@ fn resolve_rich_image_fallback_bytes(payload: &str) -> Option<Vec<u8>> {
     std::fs::read(decoded_path).ok()
 }
 
+/// Snapshot the clipboard so `paste_content_transiently` can put it back afterwards.
+///
+/// Everything below is now platform-neutral: `get_clipboard_files` / `get_clipboard_raw_format`
+/// / `clipboard_image_fallback_data_url` have real macOS and Linux implementations. While the
+/// gates were Windows-only this function could only ever see text, so restoring the snapshot
+/// after a transient paste would overwrite a user's image or file clipboard with text (or
+/// clear it). That was invisible while writes were no-ops, and destructive the moment they
+/// started working.
 fn capture_clipboard_snapshot() -> ClipboardSnapshot {
-    #[cfg(target_os = "windows")]
     unsafe {
         if let Some(files) =
             crate::infrastructure::windows_api::win_clipboard::get_clipboard_files()
@@ -92,7 +99,6 @@ fn capture_clipboard_snapshot() -> ClipboardSnapshot {
         .and_then(|mut clipboard| clipboard.get_text().ok())
         .filter(|value| !value.is_empty());
 
-    #[cfg(target_os = "windows")]
     {
         if let Some(text_value) = text.clone() {
             if let Some(html_raw) = unsafe {
@@ -439,16 +445,31 @@ async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult
     #[cfg(not(target_os = "windows"))]
     {
         // Hand focus back to the app the user copied from, before the paste chord fires.
-        // There is no portable "re-activate that specific window" primitive, but hiding
-        // ourselves achieves it: both macOS and X11 window managers return focus to the
-        // previously active window when the focused one disappears. Without this the
-        // simulated Cmd/Ctrl+V lands in Magpie's own search box (the symptom upstream
-        // issue #86 describes on Windows).
+        // There is no portable "re-activate that specific window" primitive.
+        //
+        // A pinned window must stay put: hiding it would make it vanish on every paste,
+        // which is the opposite of what pinning means.
+        if crate::WINDOW_PINNED.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         use tauri::Manager;
+        #[cfg(target_os = "macos")]
+        {
+            // macOS activation is per-application, not per-window: ordering our only window
+            // out still leaves Magpie frontmost, so the synthetic Cmd+V would come straight
+            // back to us. Hiding the *application* makes macOS activate the previously
+            // active app, which is the one the user copied from.
+            let _ = _app_handle.hide();
+        }
+        #[cfg(not(target_os = "macos"))]
         if let Some(window) = _app_handle.get_webview_window("main") {
+            // X11 window managers refocus the previously active window when the focused one
+            // disappears, which is the handoff we need.
             if window.is_visible().unwrap_or(false) {
                 let _ = window.hide();
                 crate::IS_HIDDEN.store(false, Ordering::Relaxed);
+                crate::NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
             }
         }
         // Let the compositor settle the focus change before synthesising input.
@@ -1043,6 +1064,9 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
     }
 
     if let Some(window) = app_handle.get_webview_window("main") {
+        // Windows only: off Windows this sticks (GTK `accept_focus`) and the tray show paths
+        // don't clear it, leaving a visible window that can never be typed into again.
+        #[cfg(target_os = "windows")]
         let _ = window.set_focusable(false);
         let _ = window.hide();
         crate::IS_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1399,14 +1423,18 @@ pub fn send_paste_keystroke(method: &str, content: Option<&str>, content_type: O
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = content_type;
         // "game_mode" types the text directly (matching the Windows semantics of that
         // method); everything else sends the platform's paste chord. Failures are logged
         // with an actionable hint instead of being discarded — the old fire-and-forget
         // osascript made paste fail silently on every Linux box and on Macs without the
         // Accessibility permission.
+        //
+        // The content-type guard mirrors the Windows path exactly. Without it, typing an
+        // `image` entry would hammer out its multi-megabyte `data:image/png;base64,...`
+        // string one character at a time into whatever has focus, with no way to interrupt.
+        let can_type = matches!(content_type, Some("text" | "code" | "url" | "rich_text"));
         let outcome = match (method, content) {
-            ("game_mode", Some(text)) if !text.is_empty() => {
+            ("game_mode", Some(text)) if can_type && !text.is_empty() => {
                 crate::infrastructure::portable_input::type_text(text)
             }
             _ => crate::infrastructure::portable_input::paste_combo(),

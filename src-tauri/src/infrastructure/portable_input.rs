@@ -23,6 +23,15 @@ pub fn paste_combo() -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
 
+    // Release whatever the user is still physically holding first. Paste is usually triggered
+    // by a global hotkey, so a modifier is typically still down; on X11 the injected chord
+    // combines with it and the target app receives e.g. Ctrl+Shift+V ("paste as plain text"
+    // in many editors) instead of Ctrl+V. Windows does the same thing before SendInput.
+    for held in [Key::Shift, Key::Alt, Key::Meta, Key::Control] {
+        let _ = enigo.key(held, Direction::Release);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
     enigo
         .key(modifier, Direction::Press)
         .map_err(|e| format!("press modifier failed: {}", e))?;

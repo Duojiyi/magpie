@@ -14,7 +14,7 @@
 //! Windows continues to use `win_clipboard` for everything; nothing here changes its paths.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use clipboard_rs::common::RustImage;
 use clipboard_rs::{
@@ -37,8 +37,38 @@ pub fn bump_change_sequence() {
     CHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
 }
 
-fn ctx() -> Result<ClipboardContext, String> {
-    ClipboardContext::new().map_err(|e| format!("clipboard context unavailable: {}", e))
+/// Process-wide clipboard connection.
+///
+/// Must be a singleton. clipboard-rs's X11 backend opens **two** X connections and spawns a
+/// selection-owner thread per context, and never closes any of them (no `Drop`). Creating one
+/// per call — as this first did — leaks roughly 100 X connections and 50 threads per copy,
+/// because the capture pipeline probes many formats; a handful of copies exhausts the X
+/// server's client limit and starts breaking *other* applications on the session. The write
+/// side additionally needs its connection to stay alive to retain selection ownership, so a
+/// long-lived context is also the semantically correct choice.
+static CLIPBOARD: OnceLock<Mutex<ClipboardContext>> = OnceLock::new();
+
+fn ctx() -> Result<MutexGuard<'static, ClipboardContext>, String> {
+    let cell = match CLIPBOARD.get() {
+        Some(cell) => cell,
+        None => {
+            let created = ClipboardContext::new()
+                .map_err(|e| format!("clipboard context unavailable: {}", e))?;
+            // Racing initialisers are fine: the loser's context is dropped immediately, and a
+            // context that was never used owns no selection.
+            let _ = CLIPBOARD.set(Mutex::new(created));
+            CLIPBOARD
+                .get()
+                .ok_or_else(|| "clipboard context unavailable".to_string())?
+        }
+    };
+    // A panicking clipboard call must not permanently disable the clipboard.
+    Ok(cell.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// Can this process talk to the platform clipboard at all?
+pub fn is_available() -> bool {
+    ctx().is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +176,12 @@ pub fn get_files() -> Option<Vec<String>> {
 /// Formats without a portable equivalent (private OLE formats, animated GIF containers)
 /// return `None`, which callers already treat as "format not present".
 pub fn get_raw_format(name: &str) -> Option<Vec<u8>> {
+    // Match the name *before* touching the clipboard. The capture pipeline probes ~10 format
+    // names per copy and we recognise three of them; acquiring the connection first would make
+    // the majority of calls pure overhead.
+    if !is_html_format_name(name) && !is_rtf_format_name(name) && !is_png_format_name(name) {
+        return None;
+    }
     let ctx = ctx().ok()?;
     if is_html_format_name(name) {
         let html = ctx.get_html().ok()?;
@@ -250,9 +286,21 @@ impl ClipboardHandler for WatcherHandler {
 /// "poll `get_text` every 500 ms" loop was blind to. Returns `Err` when no watcher could be
 /// established (e.g. no display server) so the caller can fall back to polling.
 pub fn run_change_watcher(callback: Arc<dyn Fn() + Send + Sync + 'static>) -> Result<(), String> {
-    let mut watcher: ClipboardWatcherContext<WatcherHandler> =
-        ClipboardWatcherContext::new().map_err(|e| format!("clipboard watcher unavailable: {}", e))?;
+    // Probe first. `ClipboardWatcherContext::new()` only allocates a channel and always
+    // succeeds; the X11 backend does its real connecting *inside* `start_watch()` — with
+    // `.expect()` on every step. Under `panic = "abort"` that turns "no display server" into
+    // "the whole app dies at startup", and it would also make the polling fallback below
+    // unreachable. Establishing a normal connection first tells us whether start_watch can
+    // safely run.
+    // Drop the guard immediately: the watcher's callback re-enters this module to read the
+    // clipboard, so holding the connection lock across `start_watch()` would deadlock on the
+    // first change event.
+    drop(ctx().map_err(|e| format!("clipboard watcher precondition failed: {}", e))?);
+
+    let mut watcher: ClipboardWatcherContext<WatcherHandler> = ClipboardWatcherContext::new()
+        .map_err(|e| format!("clipboard watcher unavailable: {}", e))?;
     watcher.add_handler(WatcherHandler { callback });
+    // Blocking; only returns if the platform loop stops on its own.
     watcher.start_watch();
     Ok(())
 }

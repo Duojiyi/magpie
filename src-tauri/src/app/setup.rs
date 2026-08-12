@@ -1262,7 +1262,14 @@ fn setup_tray(app: &App, hide_tray: bool) {
         .on_menu_event(|app, event| {
             if event.id.as_ref() == "show" {
                 if let Some(window) = app.get_webview_window("main") {
+                    // Off Windows, focusability is a sticky GTK/AppKit property that the hide
+                    // paths may have cleared; showing without restoring it yields a visible
+                    // window that refuses all keyboard input.
+                    #[cfg(not(target_os = "windows"))]
+                    let _ = window.set_focusable(true);
                     let _ = window.show();
+                    #[cfg(not(target_os = "windows"))]
+                    let _ = window.set_focus();
                 }
             } else if event.id.as_ref() == "quit" {
                 app.exit(0);
@@ -1275,6 +1282,10 @@ fn setup_tray(app: &App, hide_tray: bool) {
             } = event
             {
                 if let Some(window) = tray.app_handle().get_webview_window("main") {
+                    // See the note in the "show" menu handler: set_focus() alone is not enough
+                    // when the window was left non-focusable.
+                    #[cfg(not(target_os = "windows"))]
+                    let _ = window.set_focusable(true);
                     let _ = window.show();
                     let _ = window.set_focus();
                     let now = std::time::SystemTime::now()
