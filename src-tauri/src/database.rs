@@ -23,6 +23,10 @@ const SENSITIVE_KEYS: &[&str] = &[
     "ai_profiles",
     "cloud_sync_api_key",
     "cloud_sync_webdav_password",
+    // E2E passphrase is stored locally under DPAPI like other secrets (and, crucially, is
+    // excluded from settings-sync in cloud_sync::is_setting_sync_eligible so it never
+    // leaves the device).
+    "cloud_sync_e2e_passphrase",
 ];
 
 // 敏感标签识别集合：统一使用保留标签 `__sensitive__`（新写入），

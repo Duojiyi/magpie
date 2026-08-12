@@ -93,6 +93,8 @@ interface UseSettingsPostInitOptions {
   setCloudSyncWebdavUsername: (val: string) => void;
   setCloudSyncWebdavPassword: (val: string) => void;
   setCloudSyncWebdavBasePath: (val: string) => void;
+  setCloudSyncE2eEnabled: (val: boolean) => void;
+  setCloudSyncE2ePassphrase: (val: string) => void;
   setCloudSyncContentPrefs: (val: CloudSyncContentPrefs) => void;
   setFileServerAutoClose: (val: boolean) => void;
   setFileTransferAutoOpen: (val: boolean) => void;
@@ -183,6 +185,8 @@ export const useSettingsPostInit = ({
   setCloudSyncWebdavUsername,
   setCloudSyncWebdavPassword,
   setCloudSyncWebdavBasePath,
+  setCloudSyncE2eEnabled,
+  setCloudSyncE2ePassphrase,
   setCloudSyncContentPrefs,
   setFileServerAutoClose,
   setFileTransferAutoOpen,
@@ -376,6 +380,8 @@ export const useSettingsPostInit = ({
     setCloudSyncWebdavUsername(settings["cloud_sync_webdav_username"] || "");
     setCloudSyncWebdavPassword(settings["cloud_sync_webdav_password"] || "");
     setCloudSyncWebdavBasePath(settings["cloud_sync_webdav_base_path"] || "tiez-sync");
+    setCloudSyncE2eEnabled(settings["cloud_sync_e2e_enabled"] === "true");
+    setCloudSyncE2ePassphrase(settings["cloud_sync_e2e_passphrase"] || "");
 
     try {
       const raw = settings["cloud_sync_content_prefs"];
@@ -539,6 +545,8 @@ export const useSettingsPostInit = ({
     setCloudSyncWebdavUsername,
     setCloudSyncWebdavPassword,
     setCloudSyncWebdavBasePath,
+    setCloudSyncE2eEnabled,
+    setCloudSyncE2ePassphrase,
     setCloudSyncContentPrefs,
     setFileServerAutoClose,
     setFileTransferAutoOpen,

@@ -142,6 +142,8 @@ interface SettingsPanelProps {
     cloudSyncWebdavUsername: string;
     cloudSyncWebdavPassword: string;
     cloudSyncWebdavBasePath: string;
+    cloudSyncE2eEnabled: boolean;
+    cloudSyncE2ePassphrase: string;
     cloudSyncContentPrefs: CloudSyncContentPrefs;
     setCloudSyncContentPrefs: (val: CloudSyncContentPrefs) => void;
 
@@ -227,6 +229,8 @@ interface SettingsPanelProps {
     setCloudSyncWebdavUsername: (val: string) => void;
     setCloudSyncWebdavPassword: (val: string) => void;
     setCloudSyncWebdavBasePath: (val: string) => void;
+    setCloudSyncE2eEnabled: (val: boolean) => void;
+    setCloudSyncE2ePassphrase: (val: string) => void;
     saveCloudSync: (key: string, val: string) => void;
 
     setFileServerEnabled: (val: boolean) => void;
@@ -277,7 +281,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         customBackgroundOpacity, setCustomBackgroundOpacity,
         surfaceOpacity, setSurfaceOpacity,
         mqttEnabled, mqttServer, mqttPort, mqttUser, mqttPass, mqttTopic, mqttProtocol, mqttWsPath, mqttNotificationEnabled,
-        cloudSyncEnabled, cloudSyncAuto, cloudSyncIntervalSec, cloudSyncSnapshotIntervalMin, cloudSyncWebdavUrl, cloudSyncWebdavUsername, cloudSyncWebdavPassword, cloudSyncWebdavBasePath, cloudSyncContentPrefs,
+        cloudSyncEnabled, cloudSyncAuto, cloudSyncIntervalSec, cloudSyncSnapshotIntervalMin, cloudSyncWebdavUrl, cloudSyncWebdavUsername, cloudSyncWebdavPassword, cloudSyncWebdavBasePath, cloudSyncE2eEnabled, cloudSyncE2ePassphrase, cloudSyncContentPrefs,
         fileServerEnabled, fileServerPort, localIp, availableIps, setLocalIp, actualPort, fileTransferAutoOpen, showAutoCloseHint, fileServerAutoClose, fileTransferAutoCopy, fileTransferPath,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
@@ -293,7 +297,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         clipboardItemFontSize, setClipboardItemFontSize, clipboardTagFontSize, setClipboardTagFontSize,
         emojiPanelEnabled, setEmojiPanelEnabled, cardDensity, setCardDensity, tagManagerEnabled, setTagManagerEnabled,
         setMqttEnabled, saveMqtt, setMqttServer, setMqttPort, setMqttUser, setMqttPass, setMqttTopic, setMqttProtocol, setMqttWsPath, setMqttNotificationEnabled,
-        setCloudSyncEnabled, setCloudSyncAuto, setCloudSyncIntervalSec, setCloudSyncSnapshotIntervalMin, setCloudSyncWebdavUrl, setCloudSyncWebdavUsername, setCloudSyncWebdavPassword, setCloudSyncWebdavBasePath, setCloudSyncContentPrefs, saveCloudSync,
+        setCloudSyncEnabled, setCloudSyncAuto, setCloudSyncIntervalSec, setCloudSyncSnapshotIntervalMin, setCloudSyncWebdavUrl, setCloudSyncWebdavUsername, setCloudSyncWebdavPassword, setCloudSyncWebdavBasePath, setCloudSyncE2eEnabled, setCloudSyncE2ePassphrase, setCloudSyncContentPrefs, saveCloudSync,
         setFileServerEnabled, setFileServerPort, setFileTransferAutoOpen, setShowAutoCloseHint, setFileServerAutoClose, setFileTransferAutoCopy, fetchEffectiveTransferPath,
         setShowAppSelector, handleResetSettings,
         aiEnabled, setAiEnabled, aiTargetLang, setAiTargetLang, aiThinkingBudget, setAiThinkingBudget, saveSetting,
@@ -530,11 +534,32 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             ) : (
                 <>
             {/* 三大分组 tab 切换：常用 / 同步 / 高级 */}
-            <div className="settings-tabs" role="tablist">
+            {/* a11y: WAI-ARIA tabs 键盘交互 —— 方向键/Home/End 在 tab 间移动 + roving
+                tabindex（仅选中项进入 Tab 序列，方向键切换并聚焦目标 tab）。 */}
+            <div
+                className="settings-tabs"
+                role="tablist"
+                onKeyDown={(e) => {
+                    const order = ["common", "sync", "advanced"] as const;
+                    const idx = order.indexOf(activeTab as (typeof order)[number]);
+                    if (idx < 0) return;
+                    let next = idx;
+                    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % order.length;
+                    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx - 1 + order.length) % order.length;
+                    else if (e.key === "Home") next = 0;
+                    else if (e.key === "End") next = order.length - 1;
+                    else return;
+                    e.preventDefault();
+                    setActiveTab(order[next]);
+                    document.getElementById(`settings-tab-${order[next]}`)?.focus();
+                }}
+            >
                 <button
                     type="button"
                     role="tab"
+                    id="settings-tab-common"
                     aria-selected={activeTab === "common"}
+                    tabIndex={activeTab === "common" ? 0 : -1}
                     className={`settings-tab ${activeTab === "common" ? "active" : ""}`}
                     onClick={() => setActiveTab("common")}
                 >
@@ -543,7 +568,9 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 <button
                     type="button"
                     role="tab"
+                    id="settings-tab-sync"
                     aria-selected={activeTab === "sync"}
+                    tabIndex={activeTab === "sync" ? 0 : -1}
                     className={`settings-tab ${activeTab === "sync" ? "active" : ""}`}
                     onClick={() => setActiveTab("sync")}
                 >
@@ -552,7 +579,9 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 <button
                     type="button"
                     role="tab"
+                    id="settings-tab-advanced"
                     aria-selected={activeTab === "advanced"}
+                    tabIndex={activeTab === "advanced" ? 0 : -1}
                     className={`settings-tab ${activeTab === "advanced" ? "active" : ""}`}
                     onClick={() => setActiveTab("advanced")}
                 >
@@ -763,6 +792,10 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                     setCloudSyncWebdavPassword={setCloudSyncWebdavPassword}
                     cloudSyncWebdavBasePath={cloudSyncWebdavBasePath}
                     setCloudSyncWebdavBasePath={setCloudSyncWebdavBasePath}
+                    cloudSyncE2eEnabled={cloudSyncE2eEnabled}
+                    setCloudSyncE2eEnabled={setCloudSyncE2eEnabled}
+                    cloudSyncE2ePassphrase={cloudSyncE2ePassphrase}
+                    setCloudSyncE2ePassphrase={setCloudSyncE2ePassphrase}
                     cloudSyncContentPrefs={cloudSyncContentPrefs}
                     setCloudSyncContentPrefs={setCloudSyncContentPrefs}
                     saveCloudSync={saveCloudSync}

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::time::sleep;
@@ -145,6 +145,10 @@ struct CloudSyncConfig {
     webdav_password: String,
     webdav_base_path: String,
     content_prefs: CloudSyncContentPrefs,
+    /// Whether opt-in end-to-end encryption is enabled. The passphrase itself is read on
+    /// demand at the key-derivation site (kept out of this Debug/Clone struct to avoid
+    /// leaking it into logs), and the salt/verifier are negotiated via WebDAV e2e.json.
+    e2e_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -471,6 +475,14 @@ fn get_config(app: &AppHandle) -> Option<CloudSyncConfig> {
         .map(|raw| serde_json::from_str::<CloudSyncContentPrefs>(&raw).unwrap_or_default())
         .unwrap_or_default();
 
+    let e2e_enabled = db_state
+        .settings_repo
+        .get("cloud_sync_e2e_enabled")
+        .ok()
+        .flatten()
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
     Some(CloudSyncConfig {
         enabled,
         auto_sync,
@@ -494,6 +506,7 @@ fn get_config(app: &AppHandle) -> Option<CloudSyncConfig> {
         },
         webdav_base_path,
         content_prefs,
+        e2e_enabled,
     })
 }
 
@@ -533,7 +546,140 @@ fn is_setting_sync_eligible(key: &str) -> bool {
             | "cloud_sync_webdav_last_snapshot_pull_at"
             | "cloud_sync_webdav_last_head_rebuild_at"
             | "cloud_sync_settings_applied_at"
+            // E2E encryption config MUST NOT be settings-synced: the passphrase and salt are
+            // per-account secrets. The salt/verifier are distributed via a dedicated WebDAV
+            // e2e.json instead (see e2e handshake below).
+            | "cloud_sync_e2e_enabled"
+            | "cloud_sync_e2e_passphrase"
+            | "cloud_sync_e2e_salt"
+            | "cloud_sync_e2e_verifier"
+            | "cloud_sync_e2e_account"
+            // Other locally-encrypted secrets. settings_repo::get_all() returns DECRYPTED
+            // values, so without this they would be published to WebDAV in cleartext inside
+            // the settings snapshot (AI provider API keys, MQTT broker credentials).
+            | "ai_profiles"
+            | "mqtt_password"
+            | "mqtt_username"
     )
+}
+
+// ===== Opt-in end-to-end encryption helpers =====
+
+/// Cache of the last derived E2E key, keyed by a fingerprint of passphrase+salt, so we run
+/// the (deliberately expensive) Argon2id derivation once rather than on every sync cycle.
+/// The fingerprint is a SHA-256 of passphrase+salt — one-way, in-memory only.
+static E2E_KEY_CACHE: Mutex<Option<(String, Arc<crate::services::cloud_crypto::CloudCryptoKey>)>> =
+    Mutex::new(None);
+
+fn derive_e2e_key_cached(
+    passphrase: &str,
+    salt: &[u8],
+) -> Result<Arc<crate::services::cloud_crypto::CloudCryptoKey>, String> {
+    let mut fp_input = Vec::with_capacity(passphrase.len() + 1 + salt.len());
+    fp_input.extend_from_slice(passphrase.as_bytes());
+    fp_input.push(0);
+    fp_input.extend_from_slice(salt);
+    let fp = sha256_hex(&fp_input);
+
+    let mut cache = E2E_KEY_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((cached_fp, key)) = cache.as_ref() {
+        if cached_fp == &fp {
+            return Ok(key.clone());
+        }
+    }
+    let key = Arc::new(crate::services::cloud_crypto::derive_key(passphrase, salt)?);
+    *cache = Some((fp, key.clone()));
+    Ok(key)
+}
+
+/// Encrypt an item's cleartext fields (content / html_content / preview) in place before it
+/// leaves the device. A no-op for tombstones (whose content/preview are empty).
+///
+/// Deliberately does NOT skip values that merely *look* already-sealed: every caller seals a
+/// freshly built cleartext item exactly once, and sniffing for the envelope prefix would let
+/// genuine user content that happens to start with `mgpe2e:1:` be uploaded in cleartext.
+///
+/// Each field is sealed under an AAD of `(field_tag, content_hash)`, where `field_tag` is
+/// `<type>`, `<type>/html` or `<type>/preview`. The tag is part of the **AAD**, not just the
+/// nonce: `open_item_after_pull` must rebuild the exact same tag or authentication fails.
+/// That is precisely what stops a server from moving one field's ciphertext into another
+/// field's slot — do not "simplify" the two sides to a single shared AAD.
+fn seal_item_for_push(
+    key: &crate::services::cloud_crypto::CloudCryptoKey,
+    item: &mut CloudSyncItem,
+) -> Result<(), String> {
+    use crate::services::cloud_crypto::{build_aad, encrypt_field};
+    if item.deleted_at > 0 {
+        return Ok(());
+    }
+    let ct = item.content_type.clone();
+    let hash = item.content_hash;
+
+    if !item.content.is_empty() {
+        let plain = item.content.clone();
+        item.content = encrypt_field(key, &plain, &build_aad(&ct, hash))?;
+    }
+    if let Some(html) = item.html_content.clone() {
+        if !html.is_empty() {
+            let aad = build_aad(&format!("{}/html", ct), hash);
+            item.html_content = Some(encrypt_field(key, &html, &aad)?);
+        }
+    }
+    if !item.preview.is_empty() {
+        let plain = item.preview.clone();
+        let aad = build_aad(&format!("{}/preview", ct), hash);
+        item.preview = encrypt_field(key, &plain, &aad)?;
+    }
+    Ok(())
+}
+
+/// Count of items skipped in the current sync run because they could not be unsealed
+/// (wrong passphrase / tampered). Reset at the start of each run and surfaced in the
+/// sync status so the UI can tell the user their passphrase looks wrong.
+static E2E_UNDECRYPTABLE: AtomicI64 = AtomicI64::new(0);
+
+/// Does this item carry any sealed field? Used to avoid cloning items needlessly.
+fn item_has_sealed_fields(item: &CloudSyncItem) -> bool {
+    use crate::services::cloud_crypto::is_envelope;
+    is_envelope(&item.content)
+        || is_envelope(&item.preview)
+        || item
+            .html_content
+            .as_deref()
+            .map(is_envelope)
+            .unwrap_or(false)
+}
+
+/// Decrypt an item's sealed fields in place after it is pulled. Fields that are not
+/// envelopes are left as-is (backward compatibility with pre-E2E / mixed data). Returns
+/// `Err` if any envelope fails to authenticate (wrong passphrase / tampering); callers must
+/// skip such an item rather than propagate the error (so the sync cursor is not poisoned).
+fn open_item_after_pull(
+    key: &crate::services::cloud_crypto::CloudCryptoKey,
+    item: &mut CloudSyncItem,
+) -> Result<(), String> {
+    use crate::services::cloud_crypto::{build_aad, decrypt_field, is_envelope};
+    let ct = item.content_type.clone();
+    let hash = item.content_hash;
+
+    if is_envelope(&item.content) {
+        let env = item.content.clone();
+        item.content = decrypt_field(key, &env, &build_aad(&ct, hash))?;
+    }
+    if let Some(html) = item.html_content.clone() {
+        if is_envelope(&html) {
+            let aad = build_aad(&format!("{}/html", ct), hash);
+            item.html_content = Some(decrypt_field(key, &html, &aad)?);
+        }
+    }
+    if is_envelope(&item.preview) {
+        let env = item.preview.clone();
+        let aad = build_aad(&format!("{}/preview", ct), hash);
+        item.preview = decrypt_field(key, &env, &aad)?;
+    }
+    Ok(())
 }
 
 fn to_data_url_from_path(path: &str) -> Option<String> {
@@ -836,18 +982,31 @@ async fn process_items_blobs_before_push(
     blobs_path: &str,
     blob_cache: &mut HashMap<String, i64>,
     items: &mut [CloudSyncItem],
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<()> {
     for item in items {
         if item.deleted_at > 0 {
             continue;
         }
 
+        // Image content must be normalized to a data URL while it is still PLAINTEXT —
+        // after sealing it is an opaque envelope and path resolution would fail.
+        if item.content_type == "image" && !item.content.starts_with("data:image/") {
+            item.content = to_data_url_from_path(&item.content).ok_or_else(|| {
+                AppError::Internal("convert image path to data url failed".to_string())
+            })?;
+        }
+
+        // Seal before any hashing/upload, so blobs (and their sha256-derived names) carry
+        // ciphertext only. Hashing the ciphertext also removes the known-plaintext
+        // confirmation attack a sha256-of-plaintext blob name would allow, while the
+        // deterministic envelope keeps blob dedup/caching intact.
+        if let Some(key) = cryptor {
+            seal_item_for_push(key, item)
+                .map_err(|e| AppError::Internal(format!("e2e seal failed: {}", e)))?;
+        }
+
         if item.content_type == "image" {
-            if !item.content.starts_with("data:image/") {
-                item.content = to_data_url_from_path(&item.content).ok_or_else(|| {
-                    AppError::Internal("convert image path to data url failed".to_string())
-                })?;
-            }
             if !item.content.is_empty() {
                 let relative_hash = sha256_hex(item.content.as_bytes());
                 let relative = get_blob_path(blobs_path, BLOB_KIND_IMAGE, &relative_hash);
@@ -901,12 +1060,23 @@ async fn process_items_blobs_before_push(
     Ok(())
 }
 
+/// Persist a pulled image data URL to the app data dir, falling back to the inline data URL.
+fn materialize_image_content(app: &tauri::AppHandle, data_url: String) -> String {
+    if let Some(data_dir) = get_app_data_dir(app) {
+        if let Some(path) = crate::database::save_image_to_file(&data_url, &data_dir) {
+            return path;
+        }
+    }
+    data_url
+}
+
 async fn enrich_item_blobs_after_pull(
     app: &tauri::AppHandle,
     client: &reqwest::Client,
     cfg: &CloudSyncConfig,
     blobs_path: &str,
     items: &mut [CloudSyncItem],
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<()> {
     for item in items {
         if let Some(hash) = item.content_blob_hash.as_ref() {
@@ -916,20 +1086,48 @@ async fn enrich_item_blobs_after_pull(
                 BLOB_KIND_CONTENT
             };
             let bytes = download_webdav_blob(client, cfg, blobs_path, kind, hash).await?;
+
+            // A sealed blob carries a UTF-8 envelope instead of raw bytes. Detect this
+            // independently of whether we hold a key: a device that has not enabled E2E yet
+            // (the unavoidable transition state, since the passphrase is deliberately not
+            // settings-synced) must skip such items, not hard-error — erroring here would
+            // bubble up and stop the cursor advancing, permanently stalling that device.
+            let sealed_text: Option<String> = match std::str::from_utf8(&bytes) {
+                Ok(text) if crate::services::cloud_crypto::is_envelope(text) => {
+                    Some(text.to_string())
+                }
+                _ => None,
+            };
+
             if item.content_type == "image" {
-                let data_url = image_data_url_from_blob_bytes(&bytes).ok_or_else(|| {
-                    AppError::Validation(format!("unsupported image blob payload: {}", hash))
-                })?;
-                if let Some(data_dir) = get_app_data_dir(app) {
-                    if let Some(path) = crate::database::save_image_to_file(&data_url, &data_dir) {
-                        item.content = path;
-                    } else {
-                        item.content = data_url;
+                // Images are materialized to a file here, so they must be unsealed now.
+                // A decrypt failure must NOT abort the batch (that would stall the sync
+                // cursor forever); keep the envelope so the apply loop skips just this item.
+                let unsealed = match (cryptor, sealed_text.as_deref()) {
+                    (Some(key), Some(env)) => {
+                        let aad = crate::services::cloud_crypto::build_aad(
+                            &item.content_type,
+                            item.content_hash,
+                        );
+                        crate::services::cloud_crypto::decrypt_field(key, env, &aad).ok()
                     }
-                } else {
-                    item.content = data_url;
+                    _ => None,
+                };
+                match (unsealed, sealed_text) {
+                    (Some(data_url), _) => item.content = materialize_image_content(app, data_url),
+                    (None, Some(env)) => item.content = env,
+                    (None, None) => {
+                        let data_url = image_data_url_from_blob_bytes(&bytes).ok_or_else(|| {
+                            AppError::Validation(format!(
+                                "unsupported image blob payload: {}",
+                                hash
+                            ))
+                        })?;
+                        item.content = materialize_image_content(app, data_url);
+                    }
                 }
             } else {
+                // Text blobs are assigned as-is; if sealed, the apply loop unseals them.
                 item.content = String::from_utf8(bytes).unwrap_or_default();
             }
         }
@@ -1364,6 +1562,7 @@ fn apply_remote_changes(
     app: &AppHandle,
     remote_items: &[CloudSyncItem],
     prefs: &CloudSyncContentPrefs,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<usize> {
     if remote_items.is_empty() {
         return Ok(0);
@@ -1375,6 +1574,34 @@ fn apply_remote_changes(
     let mut applied = 0usize;
     let app_data_dir = get_app_data_dir(app);
     for item in remote_items {
+        // Unseal E2E fields into a local copy BEFORE anything inspects the content
+        // (hash recomputation, dedup lookups, preview fallbacks). An item we cannot
+        // unseal is skipped and counted — never propagated as an error — so a wrong
+        // passphrase can't stall the sync cursor for the whole batch.
+        let unsealed_holder;
+        let item: &CloudSyncItem = match cryptor {
+            Some(key) if item_has_sealed_fields(item) => {
+                let mut copy = item.clone();
+                match open_item_after_pull(key, &mut copy) {
+                    Ok(()) => {
+                        unsealed_holder = copy;
+                        &unsealed_holder
+                    }
+                    Err(_) => {
+                        E2E_UNDECRYPTABLE.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                }
+            }
+            // No key configured but the item is sealed: we can't read it, skip it rather
+            // than writing ciphertext into the local history.
+            None if item_has_sealed_fields(item) => {
+                E2E_UNDECRYPTABLE.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+            _ => item,
+        };
+
         if item.content_type == "emoji_sync" {
             if !prefs.emoji {
                 continue;
@@ -2485,6 +2712,271 @@ async fn upload_webdav_sync_head(
     upload_webdav_json_resource(client, cfg, head_path, body, "sync head").await
 }
 
+/// Name of the per-account E2E descriptor published alongside the sync data. It carries no
+/// secrets — only the KDF salt/params and a verifier — so every device that knows the
+/// passphrase derives the same key.
+const WEBDAV_E2E_FILENAME: &str = "e2e.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WebDavE2eDescriptor {
+    v: u32,
+    kdf: String,
+    /// base64url salt for Argon2id (not secret).
+    salt: String,
+    /// base64url verifier proving a passphrase derives this account's key.
+    verifier: String,
+    m_cost_kib: u32,
+    t_cost: u32,
+    p_cost: u32,
+}
+
+fn webdav_e2e_path(cfg: &CloudSyncConfig) -> String {
+    let base = normalize_webdav_base_path(&cfg.webdav_base_path);
+    if base.is_empty() {
+        WEBDAV_E2E_FILENAME.to_string()
+    } else {
+        format!("{}/{}", base, WEBDAV_E2E_FILENAME)
+    }
+}
+
+/// Fetch the account's E2E descriptor.
+///
+/// Deliberately does NOT reuse `fetch_webdav_json_resource`: that helper also maps 409 (and
+/// any parse hiccup) to "absent" for compatibility with servers like Jianguoyun. For every
+/// other resource "absent" is harmless, but here it triggers a *destructive* rewrite of the
+/// account's salt — so only a hard 404 may mean "absent"; anything else must surface as an
+/// error rather than silently rotating the account key and stranding all existing ciphertext.
+async fn fetch_webdav_e2e_descriptor(
+    client: &Client,
+    cfg: &CloudSyncConfig,
+    e2e_path: &str,
+) -> AppResult<Option<WebDavE2eDescriptor>> {
+    let url = webdav_url_for(cfg, e2e_path);
+    let resp = webdav_send_with_retry(|| webdav_with_auth(client.get(&url), cfg)).await?;
+    let status = resp.status();
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(AppError::Network(format!(
+            "webdav GET e2e descriptor failed: {} {}",
+            status, text
+        )));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    serde_json::from_slice::<WebDavE2eDescriptor>(&bytes)
+        .map(Some)
+        .map_err(|e| AppError::Internal(format!("parse e2e descriptor json failed: {}", e)))
+}
+
+/// Reject descriptors we don't understand with an actionable message. Without this, a future
+/// v2 descriptor (or tampered `kdf`) would derive a different key and surface as the very
+/// misleading "passphrase doesn't match this account".
+fn validate_e2e_descriptor(desc: &WebDavE2eDescriptor) -> AppResult<()> {
+    if desc.v != 1 || desc.kdf != "argon2id" {
+        return Err(AppError::Validation(format!(
+            "云端端到端加密配置版本不受支持(v{} / {})，请升级本应用后再同步",
+            desc.v, desc.kdf
+        )));
+    }
+    if desc.m_cost_kib != 64 * 1024 || desc.t_cost != 3 || desc.p_cost != 1 {
+        return Err(AppError::Validation(
+            "云端端到端加密的 KDF 参数与本版本不一致，请升级本应用后再同步".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Establish this run's E2E key.
+///
+/// * `Ok(None)` — E2E is off; sync proceeds in cleartext exactly as before.
+/// * `Ok(Some(key))` — key established (salt/verifier fetched, or published if this is the
+///   first device to enable E2E for the account).
+/// * `Err(..)` — E2E is on but no usable key. The caller MUST abort the sync: silently
+///   falling back to a cleartext upload would betray the user's expectation of encryption.
+async fn prepare_e2e_cryptor(
+    app: &AppHandle,
+    client: &Client,
+    cfg: &CloudSyncConfig,
+) -> AppResult<Option<Arc<crate::services::cloud_crypto::CloudCryptoKey>>> {
+    let db_state = app
+        .try_state::<DbState>()
+        .ok_or_else(|| AppError::Internal("DB state unavailable".to_string()))?;
+    let e2e_path = webdav_e2e_path(cfg);
+
+    // The remembered salt is scoped to the account it belongs to. Without this, pointing the
+    // app at a different WebDAV account/base path would leave the previous account's salt
+    // looking like "ours" and wedge sync permanently (the guard below would keep refusing to
+    // bootstrap the new, genuinely empty account).
+    // The username is part of the identity: providers like Jianguoyun serve every account
+    // from one DAV URL, so url+path alone would make a different account look like the same one.
+    let account_fp = sha256_hex(
+        format!(
+            "{}\u{0}{}\u{0}{}",
+            cfg.webdav_url.trim(),
+            cfg.webdav_username.trim(),
+            normalize_webdav_base_path(&cfg.webdav_base_path)
+        )
+        .as_bytes(),
+    );
+    let local_salt = match (
+        db_state
+            .settings_repo
+            .get("cloud_sync_e2e_account")
+            .ok()
+            .flatten(),
+        db_state
+            .settings_repo
+            .get("cloud_sync_e2e_salt")
+            .ok()
+            .flatten(),
+    ) {
+        (Some(acc), Some(salt)) if acc == account_fp && !salt.trim().is_empty() => Some(salt),
+        _ => None,
+    };
+
+    if !cfg.e2e_enabled {
+        // Don't keep a derived key in memory once the feature is switched off.
+        {
+            let mut cache = E2E_KEY_CACHE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *cache = None;
+        }
+        // Only block on a *positive* detection: if the account is still E2E-provisioned we
+        // must not publish cleartext into it. A transient read error must not break sync for
+        // the majority of users who never turn E2E on.
+        if matches!(
+            fetch_webdav_e2e_descriptor(client, cfg, &e2e_path).await,
+            Ok(Some(_))
+        ) {
+            return Err(AppError::Validation(
+                "该云端账户已启用端到端加密，但本设备未开启；请在设置中开启并填写相同口令后再同步，或在服务端删除 e2e.json 以永久退回明文同步"
+                    .to_string(),
+            ));
+        }
+        // The account is confirmed un-provisioned and the user explicitly switched E2E off,
+        // so drop the remembered provisioning state. Keeping it would wedge sync forever:
+        // the enabled path's local-salt guard would keep refusing with no reset path in the
+        // UI. Deliberately done only *after* the probe comes back negative, so a still-
+        // encrypted account never loses this device's remembered configuration.
+        if local_salt.is_some() {
+            let _ = db_state.settings_repo.set("cloud_sync_e2e_salt", "");
+            let _ = db_state.settings_repo.set("cloud_sync_e2e_verifier", "");
+            let _ = db_state.settings_repo.set("cloud_sync_e2e_account", "");
+        }
+        return Ok(None);
+    }
+
+    let passphrase = db_state
+        .settings_repo
+        .get("cloud_sync_e2e_passphrase")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if passphrase.trim().is_empty() {
+        return Err(AppError::Validation(
+            "端到端加密已开启但未设置口令；为避免明文上传，本次同步已中止".to_string(),
+        ));
+    }
+
+    match fetch_webdav_e2e_descriptor(client, cfg, &e2e_path).await? {
+        Some(desc) => {
+            validate_e2e_descriptor(&desc)?;
+            let salt = crate::services::cloud_crypto::decode_salt_b64(&desc.salt)
+                .map_err(|e| AppError::Validation(format!("远端 e2e 配置损坏: {}", e)))?;
+            let key = derive_e2e_key_cached(&passphrase, &salt)
+                .map_err(|e| AppError::Internal(format!("派生密钥失败: {}", e)))?;
+            if !crate::services::cloud_crypto::verify(&key, &desc.verifier) {
+                return Err(AppError::Validation(
+                    "端到端加密口令与该云端账户不匹配；为避免写入不可读数据，本次同步已中止"
+                        .to_string(),
+                ));
+            }
+            let _ = db_state.settings_repo.set("cloud_sync_e2e_salt", &desc.salt);
+            let _ = db_state
+                .settings_repo
+                .set("cloud_sync_e2e_verifier", &desc.verifier);
+            let _ = db_state
+                .settings_repo
+                .set("cloud_sync_e2e_account", &account_fp);
+            Ok(Some(key))
+        }
+        None => {
+            // Only bootstrap when this device has never seen a salt either. If we already
+            // have one locally, a missing descriptor is far more likely a transient read
+            // failure (some WebDAV servers answer 404/409 spuriously, and this helper maps
+            // both to "absent") than a genuinely fresh account. Regenerating would silently
+            // rotate the key and make every existing ciphertext permanently unreadable.
+            if local_salt.is_some() {
+                return Err(AppError::Network(
+                    "无法读取云端端到端加密配置(e2e.json)；为避免误轮换密钥导致旧数据不可解密，本次同步已中止"
+                        .to_string(),
+                ));
+            }
+            // First device to enable E2E for this account: publish salt + verifier so the
+            // user's other devices can derive the same key from the same passphrase.
+            let salt_b64 = crate::services::cloud_crypto::generate_salt_b64();
+            let salt = crate::services::cloud_crypto::decode_salt_b64(&salt_b64)
+                .map_err(AppError::Internal)?;
+            let key = derive_e2e_key_cached(&passphrase, &salt)
+                .map_err(|e| AppError::Internal(format!("派生密钥失败: {}", e)))?;
+            let verifier = crate::services::cloud_crypto::compute_verifier(&key);
+            let desc = WebDavE2eDescriptor {
+                v: 1,
+                kdf: "argon2id".to_string(),
+                salt: salt_b64.clone(),
+                verifier: verifier.clone(),
+                m_cost_kib: 64 * 1024,
+                t_cost: 3,
+                p_cost: 1,
+            };
+            let body = serde_json::to_vec(&desc).map_err(|e| {
+                AppError::Internal(format!("serialize e2e descriptor failed: {}", e))
+            })?;
+            upload_webdav_json_resource(client, cfg, &e2e_path, body, "e2e descriptor").await?;
+
+            // Reconcile a concurrent bootstrap: WebDAV PUT here is unconditional, so if the
+            // user enabled E2E on two devices at once the last writer wins. Read the
+            // descriptor back and adopt whichever one actually landed — otherwise this device
+            // would encrypt under a salt that is about to be overwritten, stranding that data.
+            let effective = fetch_webdav_e2e_descriptor(client, cfg, &e2e_path)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Network(
+                        "发布端到端加密配置后无法回读；为避免用即将被覆盖的密钥加密，本次同步已中止"
+                            .to_string(),
+                    )
+                })?;
+            validate_e2e_descriptor(&effective)?;
+            let effective_salt = crate::services::cloud_crypto::decode_salt_b64(&effective.salt)
+                .map_err(|e| AppError::Validation(format!("远端 e2e 配置损坏: {}", e)))?;
+            let effective_key = derive_e2e_key_cached(&passphrase, &effective_salt)
+                .map_err(|e| AppError::Internal(format!("派生密钥失败: {}", e)))?;
+            if !crate::services::cloud_crypto::verify(&effective_key, &effective.verifier) {
+                return Err(AppError::Validation(
+                    "端到端加密口令与该云端账户不匹配；为避免写入不可读数据，本次同步已中止"
+                        .to_string(),
+                ));
+            }
+            let _ = db_state
+                .settings_repo
+                .set("cloud_sync_e2e_salt", &effective.salt);
+            let _ = db_state
+                .settings_repo
+                .set("cloud_sync_e2e_verifier", &effective.verifier);
+            let _ = db_state
+                .settings_repo
+                .set("cloud_sync_e2e_account", &account_fp);
+            Ok(Some(effective_key))
+        }
+    }
+}
+
 async fn rebuild_webdav_sync_head(
     client: &Client,
     cfg: &CloudSyncConfig,
@@ -2572,6 +3064,7 @@ async fn pull_remote_webdav_ops_from_head(
     blobs_path: &str,
     ops_path: &str,
     head: &WebDavSyncHead,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<(usize, bool)> {
     let mut cursor_map = load_webdav_op_cursor_map(app);
     let mut received = 0usize;
@@ -2601,9 +3094,17 @@ async fn pull_remote_webdav_ops_from_head(
             };
             match fetch_webdav_ops_batch(client, cfg, ops_path, &op_ref).await? {
                 Some(mut batch) if batch.device_id == op_ref.device_id => {
-                    enrich_item_blobs_after_pull(app, client, cfg, blobs_path, &mut batch.entries)
-                        .await?;
-                    received += apply_remote_changes(app, &batch.entries, &cfg.content_prefs)?;
+                    enrich_item_blobs_after_pull(
+                        app,
+                        client,
+                        cfg,
+                        blobs_path,
+                        &mut batch.entries,
+                        cryptor,
+                    )
+                    .await?;
+                    received +=
+                        apply_remote_changes(app, &batch.entries, &cfg.content_prefs, cryptor)?;
                     last_seq = last_seq.max(batch.seq).max(seq);
                     cursor_map.insert(device_id.clone(), last_seq);
                 }
@@ -2626,6 +3127,7 @@ async fn pull_remote_webdav_snapshots_from_head(
     blobs_path: &str,
     devices_path: &str,
     head: &WebDavSyncHead,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<usize> {
     let mut remote_items: Vec<CloudSyncItem> = Vec::new();
     let mut device_ids: Vec<(String, i64)> = head
@@ -2651,14 +3153,21 @@ async fn pull_remote_webdav_snapshots_from_head(
         if let Some(mut snapshot) =
             fetch_webdav_snapshot(client, cfg, devices_path, &device_id).await?
         {
-            enrich_item_blobs_after_pull(app, client, cfg, blobs_path, &mut snapshot.entries)
-                .await?;
+            enrich_item_blobs_after_pull(
+                app,
+                client,
+                cfg,
+                blobs_path,
+                &mut snapshot.entries,
+                cryptor,
+            )
+            .await?;
             remote_items.extend(snapshot.entries);
         }
     }
 
     remote_items.sort_by_key(|item| item.timestamp);
-    apply_remote_changes(app, &remote_items, &cfg.content_prefs)
+    apply_remote_changes(app, &remote_items, &cfg.content_prefs, cryptor)
 }
 
 async fn pull_remote_settings_snapshot_from_head(
@@ -2779,6 +3288,7 @@ async fn pull_remote_webdav_ops(
     cfg: &CloudSyncConfig,
     ops_path: &str,
     blobs_path: &str,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<usize> {
     let refs = list_webdav_op_refs(client, cfg, ops_path).await?;
     if refs.is_empty() {
@@ -2807,8 +3317,9 @@ async fn pull_remote_webdav_ops(
             if cloud_sync_cancel_requested() {
                 break;
             }
-            enrich_item_blobs_after_pull(app, client, cfg, blobs_path, &mut batch.entries).await?;
-            received += apply_remote_changes(app, &batch.entries, &cfg.content_prefs)?;
+            enrich_item_blobs_after_pull(app, client, cfg, blobs_path, &mut batch.entries, cryptor)
+                .await?;
+            received += apply_remote_changes(app, &batch.entries, &cfg.content_prefs, cryptor)?;
             let next_seq = batch.seq.max(op_ref.seq).max(last_seq);
             cursor_map.insert(op_ref.device_id.clone(), next_seq);
         }
@@ -2853,7 +3364,8 @@ async fn sync_once_http(app: &AppHandle, cfg: &CloudSyncConfig) -> AppResult<Clo
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
 
-    let received = apply_remote_changes(app, &body.entries, &cfg.content_prefs)?;
+    // Legacy HTTP provider path (disabled): no E2E support, always plaintext.
+    let received = apply_remote_changes(app, &body.entries, &cfg.content_prefs, None)?;
     if received > 0 {
         let _ = app.emit("clipboard-changed", ());
     }
@@ -2905,6 +3417,14 @@ async fn sync_once_webdav(
     let (delta_items, collapsed_index) = collect_local_incremental_items(app, &local_items)?;
     let client = build_http_client()?;
     let paths = ensure_webdav_directories(&client, cfg).await?;
+
+    // Establish the E2E key (None when the feature is off) BEFORE anything is uploaded.
+    // If E2E is on but no usable key can be established, prepare_e2e_cryptor returns Err
+    // and this `?` aborts the run — we must never silently fall back to a cleartext upload.
+    E2E_UNDECRYPTABLE.store(0, Ordering::Relaxed);
+    let cryptor_owned = prepare_e2e_cryptor(app, &client, cfg).await?;
+    let cryptor = cryptor_owned.as_deref();
+
     let mut sync_head = resolve_webdav_sync_head(app, &client, cfg, &paths, now).await?;
     let mut sync_head_dirty = false;
     let mut webdav_blob_cache = load_webdav_blob_cache(app);
@@ -2928,6 +3448,7 @@ async fn sync_once_webdav(
             &paths.blobs_path,
             &mut webdav_blob_cache,
             &mut processed_delta,
+            cryptor,
         )
         .await?;
         for chunk in processed_delta.chunks(WEBDAV_OP_BATCH_SIZE) {
@@ -2957,6 +3478,7 @@ async fn sync_once_webdav(
         &paths.blobs_path,
         &paths.ops_path,
         &sync_head,
+        cryptor,
     )
     .await?;
     if head_stale {
@@ -2967,8 +3489,15 @@ async fn sync_once_webdav(
             upload_webdav_sync_head(&client, cfg, &paths.head_path, &sync_head).await?;
             touch_webdav_head_rebuild_at(app, now);
         }
-        received_items +=
-            pull_remote_webdav_ops(app, &client, cfg, &paths.ops_path, &paths.blobs_path).await?;
+        received_items += pull_remote_webdav_ops(
+            app,
+            &client,
+            cfg,
+            &paths.ops_path,
+            &paths.blobs_path,
+            cryptor,
+        )
+        .await?;
         received_items += pull_remote_webdav_snapshots_from_head(
             app,
             &client,
@@ -2976,6 +3505,7 @@ async fn sync_once_webdav(
             &paths.blobs_path,
             &paths.devices_path,
             &sync_head,
+            cryptor,
         )
         .await?;
     }
@@ -2983,6 +3513,13 @@ async fn sync_once_webdav(
     // Incremental Emoji Sync check
     if let Ok(emoji_op) = check_and_create_emoji_sync_op(app) {
         if let Some(op) = emoji_op {
+            // This op bypasses process_items_blobs_before_push, so seal it here too —
+            // otherwise the emoji payload would go up in cleartext while E2E is on.
+            let mut op = op;
+            if let Some(key) = cryptor {
+                seal_item_for_push(key, &mut op)
+                    .map_err(|e| AppError::Internal(format!("e2e seal failed: {}", e)))?;
+            }
             let next_seq = get_local_webdav_op_seq(app).saturating_add(1);
             upload_webdav_ops_batch(&client, cfg, &paths.ops_path, next_seq, &[op]).await?;
             set_local_webdav_op_seq(app, next_seq);
@@ -3004,6 +3541,7 @@ async fn sync_once_webdav(
             &paths.blobs_path,
             &paths.devices_path,
             &sync_head,
+            cryptor,
         )
         .await?;
 
@@ -3023,12 +3561,29 @@ async fn sync_once_webdav(
             return Ok(disabled_status());
         }
         let latest_op_seq = get_local_webdav_op_seq(app);
+        // The full snapshot bypasses process_items_blobs_before_push, so it must be sealed
+        // here as well or E2E users would publish a cleartext copy of everything. Seal a
+        // COPY: `local_items` backs the plaintext-derived content_hash / sync index computed
+        // at the top of this run and must stay cleartext.
+        let sealed_snapshot: Option<Vec<CloudSyncItem>> = match cryptor {
+            Some(key) => {
+                let mut copy = local_items.clone();
+                for item in copy.iter_mut() {
+                    seal_item_for_push(key, item)
+                        .map_err(|e| AppError::Internal(format!("e2e seal failed: {}", e)))?;
+                }
+                Some(copy)
+            }
+            None => None,
+        };
+        let snapshot_items: &[CloudSyncItem] =
+            sealed_snapshot.as_deref().unwrap_or(&local_items);
         upload_webdav_snapshot(
             &client,
             cfg,
             &paths.devices_path,
             latest_op_seq,
-            &local_items,
+            snapshot_items,
         )
         .await?;
         uploaded_items += local_items.len();
@@ -3064,11 +3619,23 @@ async fn sync_once_webdav(
             .set("cloud_sync_cursor", &now.to_string());
     }
 
+    // Surface items we had to skip because they couldn't be unsealed, so the UI can tell
+    // the user their E2E passphrase looks wrong instead of silently dropping content.
+    let undecryptable = E2E_UNDECRYPTABLE.load(Ordering::Relaxed);
+    let last_error = if undecryptable > 0 {
+        Some(format!(
+            "有 {} 条云端内容无法解密（端到端加密口令可能不匹配），已跳过",
+            undecryptable
+        ))
+    } else {
+        None
+    };
+
     Ok(CloudSyncStatus {
         state: "idle".to_string(),
         running: true,
         last_sync_at: Some(now),
-        last_error: None,
+        last_error,
         uploaded_items,
         received_items,
     })
@@ -3461,8 +4028,9 @@ fn merge_remote_emojis(app: &AppHandle, remote_json: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_item_for_sync, rewrite_rich_html_resources_for_sync, CloudSyncItem,
-        RICH_IMAGE_FALLBACK_PREFIX, RICH_IMAGE_FALLBACK_SUFFIX,
+        normalize_item_for_sync, open_item_after_pull, rewrite_rich_html_resources_for_sync,
+        seal_item_for_push, CloudSyncItem, RICH_IMAGE_FALLBACK_PREFIX,
+        RICH_IMAGE_FALLBACK_SUFFIX,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -3504,6 +4072,55 @@ mod tests {
         assert!(!rewritten.contains(&format!("file://{}", image_path_str)));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sealing_is_stable_when_only_mutable_metadata_changes() {
+        // Re-copying an entry bumps its timestamp/use_count. The sealed envelope must stay
+        // byte-identical, because blob names are sha256(ciphertext): if metadata leaked into
+        // the ciphertext, every re-sync would re-upload the whole image and orphan the
+        // previous blob on the server. Also asserts seal/open rebuild identical field tags.
+        let key = crate::services::cloud_crypto::derive_key("pass phrase", b"0123456789abcdef")
+            .expect("derive key");
+        let base = CloudSyncItem {
+            content_type: "text".to_string(),
+            content: "unchanged content".to_string(),
+            content_hash: 4242,
+            deleted_at: 0,
+            html_content: Some("<p>unchanged</p>".to_string()),
+            content_blob_hash: None,
+            html_blob_hash: None,
+            source_app: "Test".to_string(),
+            timestamp: 1_000,
+            preview: "unchanged".to_string(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            pinned_order: 0,
+        };
+
+        let mut first = base.clone();
+        let mut resynced = CloudSyncItem {
+            timestamp: 9_999_999,
+            use_count: 7,
+            ..base.clone()
+        };
+        seal_item_for_push(&key, &mut first).expect("seal first");
+        seal_item_for_push(&key, &mut resynced).expect("seal resynced");
+
+        assert!(crate::services::cloud_crypto::is_envelope(&first.content));
+        assert_eq!(
+            first.content, resynced.content,
+            "unchanged content must re-seal to an identical envelope"
+        );
+        assert_eq!(first.preview, resynced.preview);
+        assert_eq!(first.html_content, resynced.html_content);
+
+        let mut opened = first.clone();
+        open_item_after_pull(&key, &mut opened).expect("open");
+        assert_eq!(opened.content, base.content);
+        assert_eq!(opened.preview, base.preview);
+        assert_eq!(opened.html_content, base.html_content);
     }
 
     #[test]

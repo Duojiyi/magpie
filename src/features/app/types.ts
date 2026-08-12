@@ -243,6 +243,10 @@ export interface AppState {
   setCloudSyncWebdavPassword: StateSetter<string>;
   cloudSyncWebdavBasePath: string;
   setCloudSyncWebdavBasePath: StateSetter<string>;
+  cloudSyncE2eEnabled: boolean;
+  setCloudSyncE2eEnabled: StateSetter<boolean>;
+  cloudSyncE2ePassphrase: string;
+  setCloudSyncE2ePassphrase: StateSetter<string>;
   cloudSyncContentPrefs: CloudSyncContentPrefs;
   setCloudSyncContentPrefs: StateSetter<CloudSyncContentPrefs>;
   fileServerEnabled: boolean;

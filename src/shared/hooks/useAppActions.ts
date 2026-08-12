@@ -102,7 +102,11 @@ export const useAppActions = ({
           "cloud_sync_webdav_username",
           "cloud_sync_webdav_password",
           "cloud_sync_webdav_base_path",
-          "cloud_sync_content_prefs"
+          "cloud_sync_content_prefs",
+          // Changing the E2E toggle/passphrase must restart the sync client so the new key
+          // (or lack of one) takes effect on the next run.
+          "cloud_sync_e2e_enabled",
+          "cloud_sync_e2e_passphrase"
         ];
         if (key === "cloud_sync_enabled") {
           if (value !== "false") {

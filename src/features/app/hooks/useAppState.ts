@@ -152,6 +152,9 @@ export const useAppState = (): AppState => {
   const [cloudSyncWebdavUsername, setCloudSyncWebdavUsername] = useState("");
   const [cloudSyncWebdavPassword, setCloudSyncWebdavPassword] = useState("");
   const [cloudSyncWebdavBasePath, setCloudSyncWebdavBasePath] = useState("tiez-sync");
+  // Opt-in end-to-end encryption for cloud sync (default off = existing behavior).
+  const [cloudSyncE2eEnabled, setCloudSyncE2eEnabled] = useState(false);
+  const [cloudSyncE2ePassphrase, setCloudSyncE2ePassphrase] = useState("");
   const [cloudSyncContentPrefs, setCloudSyncContentPrefs] =
     useState<CloudSyncContentPrefs>(DEFAULT_CLOUD_SYNC_CONTENT_PREFS);
   const [fileServerEnabled, setFileServerEnabled] = useState(false);
@@ -417,6 +420,10 @@ export const useAppState = (): AppState => {
     setCloudSyncWebdavPassword,
     cloudSyncWebdavBasePath,
     setCloudSyncWebdavBasePath,
+    cloudSyncE2eEnabled,
+    setCloudSyncE2eEnabled,
+    cloudSyncE2ePassphrase,
+    setCloudSyncE2ePassphrase,
     cloudSyncContentPrefs,
     setCloudSyncContentPrefs,
     fileServerEnabled,

@@ -39,6 +39,10 @@ interface CloudSyncSettingsGroupProps {
     setCloudSyncWebdavPassword: (val: string) => void;
     cloudSyncWebdavBasePath: string;
     setCloudSyncWebdavBasePath: (val: string) => void;
+    cloudSyncE2eEnabled: boolean;
+    setCloudSyncE2eEnabled: (val: boolean) => void;
+    cloudSyncE2ePassphrase: string;
+    setCloudSyncE2ePassphrase: (val: string) => void;
     cloudSyncContentPrefs: CloudSyncContentPrefs;
     setCloudSyncContentPrefs: (val: CloudSyncContentPrefs) => void;
     saveCloudSync: (key: string, val: string) => void;
@@ -82,6 +86,10 @@ const CloudSyncSettingsGroup = ({
     setCloudSyncWebdavPassword,
     cloudSyncWebdavBasePath,
     setCloudSyncWebdavBasePath,
+    cloudSyncE2eEnabled,
+    setCloudSyncE2eEnabled,
+    cloudSyncE2ePassphrase,
+    setCloudSyncE2ePassphrase,
     cloudSyncContentPrefs,
     setCloudSyncContentPrefs,
     saveCloudSync,
@@ -397,6 +405,47 @@ const CloudSyncSettingsGroup = ({
                             placeholder="tiez-sync"
                         />
                     </div>
+
+                    <div className="setting-item">
+                        <LabelWithHint
+                            label={t("cloud_sync_e2e_enable")}
+                            hint={t("cloud_sync_e2e_enable_hint")}
+                            hintKey="cloud_sync_e2e_enable"
+                        />
+                        <label className="switch">
+                            <input
+                                className="cb"
+                                type="checkbox"
+                                checked={cloudSyncE2eEnabled}
+                                onChange={(e) => {
+                                    const next = e.target.checked;
+                                    setCloudSyncE2eEnabled(next);
+                                    saveCloudSync("cloud_sync_e2e_enabled", String(next));
+                                }}
+                            />
+                            <div className="toggle"><div className="left" /><div className="right" /></div>
+                        </label>
+                    </div>
+
+                    {cloudSyncE2eEnabled && (
+                        <div className="setting-item">
+                            <LabelWithHint
+                                label={t("cloud_sync_e2e_passphrase")}
+                                hint={t("cloud_sync_e2e_passphrase_hint")}
+                                hintKey="cloud_sync_e2e_passphrase"
+                            />
+                            <input
+                                className="search-input"
+                                type="password"
+                                style={{ borderRadius: "4px", padding: "4px 8px", width: "140px" }}
+                                value={cloudSyncE2ePassphrase}
+                                onFocus={() => invoke("focus_clipboard_window").catch(console.error)}
+                                onChange={(e) => setCloudSyncE2ePassphrase(e.target.value)}
+                                onBlur={() => saveCloudSync("cloud_sync_e2e_passphrase", cloudSyncE2ePassphrase)}
+                                placeholder={t("cloud_sync_e2e_passphrase_placeholder")}
+                            />
+                        </div>
+                    )}
 
                     <div
                         style={{
