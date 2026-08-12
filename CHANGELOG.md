@@ -4,6 +4,15 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.2] - 2026-08-12
+
+> 修复 v0.6.1 的 macOS 发布构建失败。功能与 v0.6.1 完全相同，Windows 用户无需升级。
+
+### 修复
+
+- **macOS 构建**：v0.6.1 给 `get_named_clipboard_formats` 增加了「取数据前先按格式名过滤」的参数（WPS 崩溃修复的核心），但只改了 Windows 实现，非 Windows 桩函数仍是旧签名，导致 macOS 编译失败、v0.6.1 只产出了 Windows 安装包。
+- **工程**：CI 的 macOS 编译检查此前是非阻断的，这类「桩函数与真实实现签名漂移」的问题只能等到发布时才暴露（已连续两次）。现改为阻断，PR 阶段即可拦截。
+
 ## [0.6.1] - 2026-08-12
 
 > 主题：**修复一批从上游继承的用户报告问题**，外加两条会导致数据不可恢复的本地缺陷。上游（`jimuzhe/tiez-clipboard`）自 v0.3.4 起已基本停止更新，其 issue 区累积的多个 bug 在本仓库仍然存在，本版逐一核查并修复。

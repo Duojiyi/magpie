@@ -48,6 +48,7 @@ pub mod windows_api {
             _max_formats: usize,
             _max_format_bytes: usize,
             _max_total_bytes: usize,
+            _keep: &dyn Fn(&str) -> bool,
         ) -> Vec<NamedClipboardFormat> {
             Vec::new()
         }

@@ -116,9 +116,9 @@ jobs:
       - name: build frontend
         run: npm run build
 
-      # Non-blocking at first so a pre-existing macOS break doesn't red-wall every PR;
-      # flip to required once the macOS target is confirmed green.
+      # Blocking. The macOS target has been green since v0.6.0, and letting it fail silently
+      # has now broken two releases: the non-Windows stub module drifts out of sync with the
+      # Windows implementation, which only surfaces when the release workflow builds macOS.
       - name: cargo check (macOS)
-        continue-on-error: true
         working-directory: src-tauri
         run: cargo check --all-targets
