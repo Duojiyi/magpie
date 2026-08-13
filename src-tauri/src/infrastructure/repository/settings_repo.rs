@@ -1,5 +1,5 @@
 use crate::database::is_sensitive_key;
-use crate::infrastructure::encryption::{self, ENCRYPT_PREFIX};
+use crate::infrastructure::encryption;
 use rusqlite::{params, Connection, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -49,7 +49,10 @@ impl SqliteSettingsRepository {
 
     fn encrypted_payload<'a>(value: &'a str) -> Option<&'a str> {
         let normalized = Self::strip_plain_prefixes(value);
-        if normalized.starts_with(ENCRYPT_PREFIX) {
+        // Recognise both schemes: DPAPI on Windows and the portable one used elsewhere.
+        // Matching only DPAPI would make a portable payload look like plaintext and get
+        // handed to the UI verbatim.
+        if encryption::is_encrypted_payload(normalized) {
             Some(normalized)
         } else {
             None
@@ -76,7 +79,7 @@ impl SqliteSettingsRepository {
                 changed = true;
             }
 
-            if !current.starts_with(ENCRYPT_PREFIX) {
+            if !encryption::is_encrypted_payload(&current) {
                 break;
             }
 
@@ -91,7 +94,7 @@ impl SqliteSettingsRepository {
             changed = true;
         }
 
-        if changed && !current.starts_with(ENCRYPT_PREFIX) {
+        if changed && !encryption::is_encrypted_payload(&current) {
             Some(current)
         } else {
             None
@@ -121,7 +124,7 @@ impl SqliteSettingsRepository {
         let _ = key;
         #[cfg(not(feature = "portable"))]
         {
-            if is_sensitive_key(key) && !value.starts_with(ENCRYPT_PREFIX) {
+            if is_sensitive_key(key) && !encryption::is_encrypted_payload(value) {
                 return encryption::encrypt_value(value).unwrap_or_else(|| value.to_string());
             }
         }
@@ -164,7 +167,7 @@ impl SettingsRepository for SqliteSettingsRepository {
             // Also migrate legacy encrypted mqtt_username back to plaintext.
             #[cfg(not(feature = "portable"))]
             {
-                if is_sensitive_key(key) && !value.starts_with(ENCRYPT_PREFIX) {
+                if is_sensitive_key(key) && !encryption::is_encrypted_payload(&value) {
                     let _ = conn.execute(
                         "UPDATE settings SET value = ? WHERE key = ?",
                         params![self.maybe_encrypt(key, &decrypted), key],
@@ -232,7 +235,7 @@ impl SettingsRepository for SqliteSettingsRepository {
             // Also migrate legacy encrypted mqtt_username back to plaintext.
             #[cfg(not(feature = "portable"))]
             {
-                if is_sensitive_key(&key) && !value.starts_with(ENCRYPT_PREFIX) {
+                if is_sensitive_key(&key) && !encryption::is_encrypted_payload(&value) {
                     let _ = conn.execute(
                         "UPDATE settings SET value = ? WHERE key = ?",
                         params![self.maybe_encrypt(&key, &decrypted), &key],

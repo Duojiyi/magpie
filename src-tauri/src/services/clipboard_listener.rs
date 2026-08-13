@@ -84,21 +84,37 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
 
     #[cfg(not(target_os = "windows"))]
     std::thread::spawn(move || {
-        let mut last_hash = 0u64;
-        let mut clipboard = arboard::Clipboard::new().unwrap();
+        // Event-driven where the platform allows it (NSPasteboard changeCount on macOS,
+        // XFixes selection events on X11). Unlike the old "poll get_text every 500ms" loop,
+        // this observes image/file/HTML-only changes too, and it feeds the clipboard
+        // sequence number that the capture pipeline uses for debouncing.
+        //
+        // No unwrap anywhere on this path: with `panic = "abort"` a missing display server
+        // would otherwise abort the entire app. If the watcher can't start, degrade to
+        // text-only polling, which retries clipboard access internally.
+        // Keep retrying the event-driven watcher. An autostarted app frequently loses the
+        // race with the display server, and a one-shot fallback would strand the whole
+        // session in text-only polling — silently losing image/file/HTML capture, which is
+        // most of what this backend exists for.
         loop {
-            // Very primitive polling, relies on higher layers to deduplicate properly.
-            if let Ok(text) = clipboard.get_text() {
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                text.hash(&mut hasher);
-                let current_hash = hasher.finish();
-                if current_hash != last_hash {
-                    last_hash = current_hash;
-                    callback();
+            match crate::infrastructure::portable_clipboard::run_change_watcher(callback.clone()) {
+                Ok(()) => {
+                    // The platform loop only ends when the platform stops it, which we never
+                    // ask for. Not an error, but nothing is watching any more.
+                    crate::info!("[CLIPBOARD] change watcher loop exited; restarting");
+                }
+                Err(err) => {
+                    crate::error!(
+                        "[CLIPBOARD] change watcher unavailable ({}); text-only polling for now",
+                        err
+                    );
+                    crate::infrastructure::portable_clipboard::run_polling_watcher_for(
+                        callback.clone(),
+                        std::time::Duration::from_secs(30),
+                    );
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_secs(2));
         }
     });
 }

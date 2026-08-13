@@ -1,5 +1,4 @@
 use crate::app_state::AppDataDir;
-use crate::database::ENCRYPT_PREFIX;
 use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json;
@@ -15,71 +14,43 @@ pub fn get_data_path(state: State<'_, AppDataDir>) -> AppResult<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+// These four used to hand-roll `explorer` / `open` invocations with no Linux branch at all,
+// so on Linux the command bodies compiled down to `Ok(())` — the UI reported success and
+// nothing opened. tauri-plugin-opener (already a dependency and already permitted in the
+// capability set) implements all three platforms, including `xdg-open`.
+
 #[tauri::command]
-pub fn open_folder(path: String) -> AppResult<()> {
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg(path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open folder: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg(path)
-        .spawn()
+pub fn open_folder(app: AppHandle, path: String) -> AppResult<()> {
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path, None::<&str>)
         .map_err(|e| AppError::Internal(format!("Failed to open folder: {}", e)))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_data_folder(state: State<'_, AppDataDir>) -> AppResult<()> {
-    let path = state.0.lock().unwrap();
-    let path_str = path.to_string_lossy().to_string();
-
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg(path_str)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open data folder: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg(path_str)
-        .spawn()
+pub fn open_data_folder(app: AppHandle, state: State<'_, AppDataDir>) -> AppResult<()> {
+    let path_str = {
+        let path = state.0.lock().unwrap();
+        path.to_string_lossy().to_string()
+    };
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path_str, None::<&str>)
         .map_err(|e| AppError::Internal(format!("Failed to open data folder: {}", e)))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_file_with_default_app(file_path: String) -> AppResult<()> {
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg(&file_path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg(&file_path)
-        .spawn()
+pub fn open_file_with_default_app(app: AppHandle, file_path: String) -> AppResult<()> {
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(file_path, None::<&str>)
         .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_file_location(file_path: String) -> AppResult<()> {
-    use std::process::Command;
-    #[cfg(target_os = "windows")]
-    Command::new("explorer")
-        .arg("/select,")
-        .arg(&file_path)
-        .spawn()
-        .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg("-R")
-        .arg(&file_path)
-        .spawn()
+pub fn open_file_location(app: AppHandle, file_path: String) -> AppResult<()> {
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .reveal_item_in_dir(&file_path)
         .map_err(|e| AppError::Internal(format!("Failed to open file location: {}", e)))?;
     Ok(())
 }
@@ -682,6 +653,68 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
 
     let old_path_buf = app_handle.state::<AppDataDir>().0.lock().unwrap().clone();
 
+    // Selecting the folder we already use would move files onto themselves: the database gets
+    // renamed to clipboard.db.backup, the follow-up move then fails because the source is gone,
+    // and we bail out with the data left under a name the app never opens.
+    //
+    // Still record the choice. The active folder and datapath.txt can legitimately disagree —
+    // startup falls back to the default folder when a configured drive is missing — so picking
+    // the folder currently in use is a meaningful way to make that fallback permanent.
+    if old_path_buf == new_data_path {
+        let config_dir = app_handle.path().app_data_dir().map_err(AppError::from)?;
+        if !config_dir.exists() {
+            std::fs::create_dir_all(&config_dir).map_err(AppError::from)?;
+        }
+        std::fs::write(config_dir.join("datapath.txt"), &clean_path).map_err(AppError::from)?;
+        return Ok(());
+    }
+
+    // 0. Pre-flight: carry the at-rest encryption key across FIRST.
+    //
+    // Off Windows, sensitive values (API keys, MQTT credentials, the cloud-sync E2E passphrase,
+    // entries tagged sensitive) are encrypted with a key stored beside the database. Two things
+    // must hold, and both have to be settled before anything moves:
+    //
+    // - The key has to travel with the data. Without it the destination holds ciphertext and no
+    //   key, the next start mints a fresh one, and every encrypted value is lost for good.
+    // - If the destination already has a *different* key, it belongs to another encrypted data
+    //   set (restoring a backup folder, pointing back at a previous install). Merging our
+    //   database into it would leave our ciphertext unreadable, so refuse outright.
+    //
+    // Doing this first means a failure here leaves the old folder completely intact, instead of
+    // aborting midway with the database already moved and datapath.txt still pointing at the
+    // now-empty original.
+    let old_key = old_path_buf.join("local.key");
+    let new_key = new_data_path.join("local.key");
+    if old_key.exists() {
+        let old_key_bytes = std::fs::read(&old_key)
+            .map_err(|e| AppError::Internal(format!("读取本机加密密钥失败：{}", e)))?;
+        if new_key.exists() {
+            let new_key_bytes = std::fs::read(&new_key).unwrap_or_default();
+            if new_key_bytes != old_key_bytes {
+                return Err(AppError::Validation(
+                    "目标文件夹已包含另一份加密数据的密钥，迁移过去会导致当前数据永久无法解密。\
+                     已中止，未移动任何文件；请改选一个空文件夹。"
+                        .to_string(),
+                ));
+            }
+        } else {
+            // Copy, not move: the source folder keeps a usable key as a fallback.
+            std::fs::copy(&old_key, &new_key).map_err(|e| {
+                AppError::Internal(format!(
+                    "复制本机加密密钥到新文件夹失败（{}）。已中止，未移动任何文件。",
+                    e
+                ))
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ =
+                    std::fs::set_permissions(&new_key, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+
     // 1. Migrate data folders if they exist in the OLD path
     {
         for folder in ["attachments", "emoji_favorites"] {
@@ -748,6 +781,7 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
                 }
             }
         }
+
     }
 
     // 1.3 Rewrite internal attachment paths inside DB (if DB exists in new path)
@@ -984,15 +1018,18 @@ fn rewrite_content_path(
         None
     };
 
-    if value.starts_with(ENCRYPT_PREFIX) {
+    if crate::database::encryption::is_encrypted_payload(value) {
         #[cfg(not(feature = "portable"))]
         {
-            let plain = crate::database::encryption::decrypt_value(value)
-                .unwrap_or_else(|| value.to_string());
-            if let Some(updated_plain) = replace_prefix(&plain) {
-                let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
-                    .unwrap_or(updated_plain);
-                return Some(encrypted);
+            // Only rewrite when we could actually read the value. Falling back to the raw
+            // ciphertext (as `unwrap_or_else` did) would re-encrypt the ciphertext itself and
+            // permanently lose the original.
+            if let Some(plain) = crate::database::encryption::decrypt_value(value) {
+                if let Some(updated_plain) = replace_prefix(&plain) {
+                    let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
+                        .unwrap_or(updated_plain);
+                    return Some(encrypted);
+                }
             }
         }
         return None;
@@ -1018,15 +1055,16 @@ fn rewrite_html_paths(
         }
     };
 
-    if value.starts_with(ENCRYPT_PREFIX) {
+    if crate::database::encryption::is_encrypted_payload(value) {
         #[cfg(not(feature = "portable"))]
         {
-            let plain = crate::database::encryption::decrypt_value(value)
-                .unwrap_or_else(|| value.to_string());
-            if let Some(updated_plain) = replace_any(&plain) {
-                let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
-                    .unwrap_or(updated_plain);
-                return Some(encrypted);
+            // See the note above: never re-encrypt a value we failed to decrypt.
+            if let Some(plain) = crate::database::encryption::decrypt_value(value) {
+                if let Some(updated_plain) = replace_any(&plain) {
+                    let encrypted = crate::database::encryption::encrypt_value(&updated_plain)
+                        .unwrap_or(updated_plain);
+                    return Some(encrypted);
+                }
             }
         }
         return None;

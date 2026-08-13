@@ -1,4 +1,7 @@
 pub mod encryption;
+pub mod portable_clipboard;
+pub mod portable_input;
+pub mod portable_window_tracker;
 pub mod repository;
 #[cfg(target_os = "windows")]
 pub mod windows_ext;
@@ -6,9 +9,18 @@ pub mod windows_ext;
 #[cfg(target_os = "windows")]
 pub mod windows_api;
 
+/// Non-Windows implementation of the `windows_api` surface.
+///
+/// Keeps the exact module path and signatures of the Windows implementation so the ~1200
+/// call sites need no platform branches, but the clipboard entry points now delegate to
+/// `infrastructure::portable_clipboard` (NSPasteboard / X11) instead of silently succeeding
+/// as no-ops. Anything still stubbed below either has no portable equivalent (private OLE
+/// formats) or is a Windows-only concept.
 #[cfg(not(target_os = "windows"))]
 pub mod windows_api {
     pub mod win_clipboard {
+        use crate::infrastructure::portable_clipboard as portable;
+
         #[derive(Clone)]
         pub struct ImageData {
             pub width: usize,
@@ -22,50 +34,65 @@ pub mod windows_api {
             pub data: Vec<u8>,
         }
 
-        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-
+        /// Stable between clipboard changes (bumped by the change watcher), restoring the
+        /// "same sequence → skip re-capture" debounce that the old always-incrementing stub
+        /// defeated.
         pub fn get_clipboard_sequence_number() -> u32 {
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            portable::change_sequence()
         }
 
         pub unsafe fn clear_clipboard() -> Result<(), String> {
-            Ok(())
+            portable::clear()
         }
 
         pub unsafe fn get_clipboard_image() -> Option<ImageData> {
-            None
+            portable::get_image_rgba().map(|(width, height, bytes)| ImageData {
+                width,
+                height,
+                bytes,
+            })
         }
 
         pub unsafe fn get_clipboard_files() -> Option<Vec<String>> {
-            None
+            portable::get_files()
         }
 
-        pub unsafe fn get_clipboard_raw_format(_name: &str) -> Option<Vec<u8>> {
-            None
+        pub unsafe fn get_clipboard_raw_format(name: &str) -> Option<Vec<u8>> {
+            portable::get_raw_format(name)
         }
 
+        /// Application-private formats, identified by UTI (macOS) or selection target (X11)
+        /// rather than by Windows format name. They round-trip within a platform, which is
+        /// the case that matters: copy from an app and paste back into it.
         pub unsafe fn get_named_clipboard_formats(
-            _max_formats: usize,
-            _max_format_bytes: usize,
-            _max_total_bytes: usize,
-            _keep: &dyn Fn(&str) -> bool,
+            max_formats: usize,
+            max_format_bytes: usize,
+            max_total_bytes: usize,
+            keep: &dyn Fn(&str) -> bool,
         ) -> Vec<NamedClipboardFormat> {
-            Vec::new()
+            portable::get_named_formats(max_formats, max_format_bytes, max_total_bytes, keep)
+                .into_iter()
+                .map(|(name, data)| NamedClipboardFormat { name, data })
+                .collect()
         }
 
-        pub unsafe fn set_clipboard_files(_paths: Vec<String>) -> Result<(), String> {
-            Ok(())
+        pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
+            portable::set_files(paths)
         }
 
-        pub unsafe fn set_clipboard_text_and_html(_text: &str, _: &str) -> Result<(), String> {
-            Ok(())
+        pub unsafe fn set_clipboard_text_and_html(
+            text: &str,
+            cf_html: &str,
+        ) -> Result<(), String> {
+            portable::set_rich_content(text, cf_html, None, &[])
         }
 
         pub unsafe fn append_clipboard_text_and_html(
-            _text: &str,
-            _cf_html: &str,
+            text: &str,
+            cf_html: &str,
         ) -> Result<(), String> {
-            Ok(())
+            // No append semantics on these pasteboards; a full rewrite is the closest match.
+            portable::set_rich_content(text, cf_html, None, &[])
         }
 
         pub unsafe fn append_named_clipboard_formats(
@@ -75,48 +102,70 @@ pub mod windows_api {
         }
 
         pub unsafe fn set_clipboard_image_and_gif(
-            _data: ImageData,
+            data: ImageData,
             _gif_bytes: Option<&[u8]>,
         ) -> Result<(), String> {
-            Ok(())
+            portable::set_image_rgba(data.width, data.height, &data.bytes)
         }
 
+        /// The `Option<String>` return mirrors the Windows contract, where it carries the
+        /// path of a GIF temp file written for CF_HDROP consumers. No such file exists on
+        /// these platforms, so it is always `None`.
         pub unsafe fn set_clipboard_image_with_formats(
-            _data: ImageData,
+            data: ImageData,
             _gif_data: Option<&[u8]>,
             _png_data: Option<&[u8]>,
         ) -> Result<Option<String>, String> {
+            portable::set_image_rgba(data.width, data.height, &data.bytes)?;
             Ok(None)
         }
 
         pub unsafe fn set_clipboard_rich_content(
-            _image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
-            _text: &str,
-            _cf_html: &str,
-            _named_formats: &[NamedClipboardFormat],
+            image_formats: Option<(ImageData, Option<&[u8]>, Option<&[u8]>)>,
+            text: &str,
+            cf_html: &str,
+            named_formats: &[NamedClipboardFormat],
         ) -> Result<Option<String>, String> {
+            let image = image_formats
+                .as_ref()
+                .map(|(image, _, _)| (image.width, image.height, image.bytes.as_slice()));
+            let named: Vec<(String, Vec<u8>)> = named_formats
+                .iter()
+                .map(|f| (f.name.clone(), f.data.clone()))
+                .collect();
+            portable::set_rich_content(text, cf_html, image, &named)?;
             Ok(None)
         }
     }
 
     pub mod window_tracker {
+        use crate::infrastructure::portable_window_tracker as portable;
+
+        /// Windows installs a WinEvent hook here. macOS/Linux query the frontmost app on
+        /// demand instead, so there is nothing to start.
         pub fn start_window_tracking(_app_handle: tauri::AppHandle) {}
+
         #[derive(Debug, Clone, Default)]
         pub struct ActiveAppInfo {
             pub app_name: String,
             pub process_path: Option<String>,
         }
-        pub fn get_active_app_info() -> ActiveAppInfo {
+
+        fn from_portable(app: portable::ForegroundApp) -> ActiveAppInfo {
             ActiveAppInfo {
-                app_name: "FallbackApp".into(),
-                process_path: None,
+                app_name: app.app_name,
+                process_path: app.process_path,
             }
         }
+
+        pub fn get_active_app_info() -> ActiveAppInfo {
+            from_portable(portable::frontmost_app())
+        }
+
+        /// Neither platform exposes a clipboard *owner*, so the frontmost application is the
+        /// proxy — the same fallback Windows uses when `GetClipboardOwner` yields nothing.
         pub fn get_clipboard_source_app_info() -> ActiveAppInfo {
-            ActiveAppInfo {
-                app_name: "FallbackApp".into(),
-                process_path: None,
-            }
+            from_portable(portable::frontmost_app())
         }
     }
 

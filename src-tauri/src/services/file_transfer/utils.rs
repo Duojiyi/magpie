@@ -100,10 +100,16 @@ pub fn get_available_ips() -> Vec<String> {
 /// Windows) so the result can never escape `save_dir` or target a different file than
 /// the one just written.
 pub fn sanitize_upload_filename(raw: &str) -> String {
-    let base = std::path::Path::new(raw)
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    // Split on both separators explicitly instead of using Path::file_name(): the uploader is
+    // a remote peer that may be running any OS, and on Unix `\` is an ordinary filename
+    // character, so `Path::file_name()` would hand back the entire `..\..\evil.bat` string as
+    // a single component. Reducing to the last component here keeps the behaviour identical
+    // on every platform regardless of which style the sender used.
+    let base = raw
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_string();
 
     let cleaned: String = base
         .chars()

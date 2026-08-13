@@ -1653,6 +1653,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_cf_html_recovers_portable_backend_envelope() {
+        // The macOS/Linux clipboard backend wraps bare HTML in a synthetic CF_HTML envelope
+        // with zeroed offsets (portable_clipboard::wrap_fragment_as_cf_html) and relies on
+        // this parser's marker fallback. If this round trip breaks, HTML capture silently
+        // dies on those platforms.
+        let wrapped = crate::infrastructure::portable_clipboard::wrap_fragment_as_cf_html(
+            "<table><tr><td>A</td></tr></table>",
+        );
+        let parsed = parse_cf_html(&wrapped).expect("parse_cf_html must recover the fragment");
+        assert!(parsed.contains("<td>A</td>"), "parsed={parsed:?}");
+        assert!(!parsed.contains("StartFragment"), "markers must not leak");
+    }
+
+    #[test]
     fn parse_cf_html_repairs_missing_opening_bracket() {
         let raw = b"Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n<!--StartFragment-->table border=0 cellpadding=0 cellspacing=0><tr><td>A</td></tr><!--EndFragment-->";
         let parsed = parse_cf_html(raw).expect("cf_html should parse");

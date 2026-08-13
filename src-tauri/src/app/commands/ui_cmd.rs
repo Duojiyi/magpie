@@ -259,16 +259,23 @@ pub fn set_theme(
 /// - Windows 10：返回 false，玻璃主题降级为不透明实色背景；前端应据此挂 `no-vibrancy`
 ///   class，使 mist.css / dusk.css 中的不透明 fallback 规则生效，避免透明窗口直接看到
 ///   桌面壁纸。
-/// - 非 Windows（macOS 等）：返回 true（macOS 走 NSVisualEffectMaterial，玻璃可用）。
+/// - macOS：返回 true（走 NSVisualEffectMaterial，玻璃可用）。
+/// - Linux 等其它平台：返回 false。`window_vibrancy` 在这些平台上直接返回
+///   `UnsupportedPlatform`，若这里仍报告 true，前端就不会挂 `no-vibrancy` class，
+///   mist.css / dusk.css 的不透明兜底不生效，窗口会变成直接透出桌面的空壳。
 #[tauri::command]
 pub fn get_vibrancy_capability() -> bool {
     #[cfg(target_os = "windows")]
     {
         supports_mica()
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
         true
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        false
     }
 }
 

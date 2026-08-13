@@ -1,6 +1,5 @@
 use crate::database::{
     calc_image_hash, calc_text_hash, has_sensitive_tag, is_text_type, save_image_to_file,
-    ENCRYPT_PREFIX,
 };
 use crate::domain::models::ClipboardEntry;
 use crate::infrastructure::encryption;
@@ -82,11 +81,11 @@ impl SqliteClipboardRepository {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2).ok(), row.get(3)?, row.get(4)?)),
             ).map_err(|e| e.to_string())?;
 
-        let already_encrypted = content_raw.starts_with(ENCRYPT_PREFIX)
-            && preview_raw.starts_with(ENCRYPT_PREFIX)
+        let already_encrypted = encryption::is_encrypted_payload(&content_raw)
+            && encryption::is_encrypted_payload(&preview_raw)
             && html_raw
                 .as_ref()
-                .map(|h| h.starts_with(ENCRYPT_PREFIX))
+                .map(|h| encryption::is_encrypted_payload(h))
                 .unwrap_or(true);
         if already_encrypted {
             return Ok(());
@@ -120,11 +119,11 @@ impl SqliteClipboardRepository {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2).ok(), row.get(3)?, row.get(4)?)),
             ).map_err(|e| e.to_string())?;
 
-        let any_encrypted = content_raw.starts_with(ENCRYPT_PREFIX)
-            || preview_raw.starts_with(ENCRYPT_PREFIX)
+        let any_encrypted = encryption::is_encrypted_payload(&content_raw)
+            || encryption::is_encrypted_payload(&preview_raw)
             || html_raw
                 .as_ref()
-                .map(|h| h.starts_with(ENCRYPT_PREFIX))
+                .map(|h| encryption::is_encrypted_payload(h))
                 .unwrap_or(false);
         if !any_encrypted {
             return Ok(());
@@ -214,7 +213,7 @@ impl SqliteClipboardRepository {
     fn maybe_encrypt_text(&self, value: &str) -> String {
         #[cfg(not(feature = "portable"))]
         {
-            if value.starts_with(ENCRYPT_PREFIX) {
+            if encryption::is_encrypted_payload(value) {
                 return value.to_string();
             }
             encryption::encrypt_value(value).unwrap_or_else(|| value.to_string())
@@ -226,7 +225,7 @@ impl SqliteClipboardRepository {
     }
 
     fn maybe_decrypt_text(&self, value: &str) -> String {
-        if value.starts_with(ENCRYPT_PREFIX) {
+        if encryption::is_encrypted_payload(value) {
             encryption::decrypt_value(value).unwrap_or_else(|| value.to_string())
         } else {
             value.to_string()
@@ -933,15 +932,15 @@ impl ClipboardRepository for SqliteClipboardRepository {
             #[cfg(not(feature = "portable"))]
             {
                 let is_sensitive = has_sensitive_tag(&entry.tags);
-                let content_encrypted = content_raw.starts_with(ENCRYPT_PREFIX);
-                let preview_encrypted = preview_raw.starts_with(ENCRYPT_PREFIX);
+                let content_encrypted = encryption::is_encrypted_payload(&content_raw);
+                let preview_encrypted = encryption::is_encrypted_payload(&preview_raw);
                 let html_encrypted = html_raw
                     .as_ref()
-                    .map(|h| h.starts_with(ENCRYPT_PREFIX))
+                    .map(|h| encryption::is_encrypted_payload(h))
                     .unwrap_or(false);
                 let html_needs_encrypt = html_raw
                     .as_ref()
-                    .map(|h| !h.starts_with(ENCRYPT_PREFIX))
+                    .map(|h| !encryption::is_encrypted_payload(h))
                     .unwrap_or(false);
 
                 if is_sensitive && (!content_encrypted || !preview_encrypted || html_needs_encrypt)
@@ -1117,7 +1116,10 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 let mut cursor_ts = i64::MAX;
                 let mut cursor_id = i64::MAX;
                 let batch_size = 500;
-                let enc_like = format!("{}%", ENCRYPT_PREFIX);
+                // Both at-rest schemes: DPAPI on Windows, the portable one elsewhere. Matching
+                // only one would hide encrypted rows from this scan on the other platform.
+                let enc_like = format!("{}%", encryption::ENCRYPTED_PREFIXES[0]);
+                let enc_like_alt = format!("{}%", encryption::ENCRYPTED_PREFIXES[1]);
                 let sql_sensitive = format!(
                     "SELECT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path 
                      FROM clipboard_history ch
@@ -1130,6 +1132,9 @@ impl ClipboardRepository for SqliteClipboardRepository {
                          OR ch.content LIKE ?1 
                          OR ch.preview LIKE ?1 
                          OR ch.html_content LIKE ?1
+                         OR ch.content LIKE ?5
+                         OR ch.preview LIKE ?5
+                         OR ch.html_content LIKE ?5
                      )
                        AND ((ch.timestamp < ?2) OR (ch.timestamp = ?2 AND ch.id < ?3))
                      ORDER BY ch.timestamp DESC, ch.id DESC
@@ -1140,7 +1145,9 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 loop {
                     let mut stmt = conn.prepare(&sql_sensitive).map_err(|e| e.to_string())?;
                     let rows = stmt
-                        .query_map(params![enc_like, cursor_ts, cursor_id, batch_size], |row| {
+                        .query_map(
+                            params![enc_like, cursor_ts, cursor_id, batch_size, enc_like_alt],
+                            |row| {
                             let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
                             Ok(ClipboardEntry {
                                 id: row.get(0)?,
@@ -1158,7 +1165,8 @@ impl ClipboardRepository for SqliteClipboardRepository {
                                 source_app_path: row.get(12).unwrap_or(None),
                                 file_preview_exists: true,
                             })
-                        })
+                            },
+                        )
                         .map_err(|e| e.to_string())?;
 
                     let mut batch: Vec<ClipboardEntry> = Vec::new();

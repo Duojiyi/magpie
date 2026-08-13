@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
 import { matchesHotkey } from "./useHotkeyMatching";
+import { isMacPlatform } from "../lib/platform";
 import { useWindowVisibility } from "./useWindowVisibility";
 import { SENSITIVE_TAG } from "../../features/tag/components/FloatingTagInput";
 import { normalizeTag, mergeTagsUnion } from "../lib/clipboardCore";
@@ -232,9 +233,12 @@ export const useKeyboardNavigation = ({
       // - 第 N 个按当前「过滤后可见列表」计；可见条目 < N 时无操作、不报错（需求 16.2/16.3）。
       // 注：成功粘贴后隐藏主面板（需求 16.4）由 8.2 接线。
       if (
-        e.ctrlKey &&
+        // macOS 上 Cmd+数字 才是原生手势（Ctrl+数字 仍然保留，两者等价）。
+        // 这条 webview 路径是 macOS/Linux 唯一的数字快捷粘贴实现——低级键盘钩子是
+        // Windows 专属的，而主面板在这两个平台上呼出时会获得焦点，故由 keydown 承接。
+        (e.ctrlKey || (isMacPlatform() && e.metaKey)) &&
         !e.altKey &&
-        !e.metaKey &&
+        (isMacPlatform() || !e.metaKey) &&
         // 排除 Ctrl+Shift+数字：仅响应纯 Ctrl+1~9，Ctrl+Shift+数字 透传（需求 16.2）
         !e.shiftKey &&
         /^Digit[1-9]$/.test(e.code) &&
