@@ -176,6 +176,22 @@ async fn restore_clipboard_snapshot(snapshot: ClipboardSnapshot) -> AppResult<()
             // the paths with newlines into one string, which the "file" branch then treats as
             // a *single* path — so restoring a multi-file clipboard produced one nonsense
             // entry. Unreachable off Windows before the snapshot gates were removed.
+            //
+            // Arm the echo guard by hand, which prepare_clipboard_payload used to do for us.
+            // Without it our own restore looks like a fresh copy to the clipboard monitor and
+            // the file entry gets pushed back into the history on every transient paste. The
+            // hash must match what the monitor computes for a file entry: the paths joined
+            // with newlines (see the file branch of the capture pipeline).
+            let (mut content_hash, current_time) = calculate_content_hash(&paths.join("\n"));
+            if content_hash == 0 {
+                // 0 doubles as "no recent write" in the guard, so never store it.
+                content_hash = 1;
+            }
+            crate::LAST_APP_SET_HASH.store(content_hash, Ordering::SeqCst);
+            crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);
+            crate::LAST_APP_SET_IMAGE_VISUAL_HASH.store(0, Ordering::SeqCst);
+            crate::LAST_APP_SET_TIMESTAMP.store(current_time, Ordering::SeqCst);
+
             unsafe {
                 crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(paths)
                     .map_err(AppError::Internal)?;
@@ -442,6 +458,11 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
     Ok(())
 }
 
+/// Set when the paste path hid the window to hand focus back, so the pinned branch knows
+/// whether there is anything to restore afterwards.
+#[cfg(not(target_os = "windows"))]
+static HID_FOR_PASTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult<()> {
     #[cfg(not(target_os = "windows"))]
     {
@@ -454,6 +475,7 @@ async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult
         // way to be both focused-elsewhere and visible, so correctness wins: hide now, and
         // hide_window_after_paste brings a pinned window straight back.
         use tauri::Manager;
+        HID_FOR_PASTE.store(true, Ordering::SeqCst);
         #[cfg(target_os = "macos")]
         {
             // macOS activation is per-application, not per-window: ordering our only window
@@ -1063,14 +1085,26 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
             let _ = restore_focus_before_paste(app_handle).await;
         }
         // Off Windows the handoff had to hide us (there is no visible-but-unfocused state),
-        // so bring a pinned window back now that the paste has been delivered. Calling the
-        // handoff again here would just hide it a second time.
+        // so bring a pinned window back now that the paste has been delivered.
         #[cfg(not(target_os = "windows"))]
         {
-            #[cfg(target_os = "macos")]
-            let _ = app_handle.show();
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.show();
+            // Only if we were the ones who hid it. When the paste came from a hotkey while the
+            // pinned window was visible but unfocused, nothing was hidden — showing here would
+            // yank focus away from the app the user is typing in.
+            if HID_FOR_PASTE.swap(false, Ordering::SeqCst) {
+                // Let the synthesised chord actually reach the target first. Input is posted
+                // asynchronously and delivered to whichever app is frontmost at that moment,
+                // and re-showing activates us again: macOS `NSApplication.unhide` activates,
+                // and most Linux WMs focus a window that appears. Without this wait the paste
+                // can land back in our own search box. Same settling budget the transient
+                // paste path uses before restoring the clipboard.
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+                #[cfg(target_os = "macos")]
+                let _ = app_handle.show();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                }
             }
         }
         return;

@@ -555,33 +555,57 @@ pub fn run_polling_watcher_for(
     callback: Arc<dyn Fn() + Send + Sync + 'static>,
     budget: std::time::Duration,
 ) {
+    use std::cell::RefCell;
     use std::hash::{Hash, Hasher};
 
+    // State lives across calls, because the caller invokes this repeatedly while retrying the
+    // event-driven watcher. Rebuilding the connection each round would reintroduce the
+    // per-call-context pattern this module exists to avoid, and resetting the hash would make
+    // the first read of every round look like a change and fire a spurious capture.
+    thread_local! {
+        static CLIPBOARD: RefCell<Option<arboard::Clipboard>> = const { RefCell::new(None) };
+        static LAST_HASH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
     let deadline = std::time::Instant::now() + budget;
-    let mut clipboard = None;
-    let mut last_hash = 0u64;
     while std::time::Instant::now() < deadline {
-        if clipboard.is_none() {
-            // Never unwrap here: with `panic = "abort"` a missing display server would take
-            // the whole app down. Keep retrying instead; clipboard capture simply stays off
-            // until the environment provides one.
-            clipboard = arboard::Clipboard::new().ok();
-            if clipboard.is_none() {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                continue;
+        let opened = CLIPBOARD.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                // Never unwrap here: with `panic = "abort"` a missing display server would
+                // take the whole app down. Keep retrying instead; clipboard capture simply
+                // stays off until the environment provides one.
+                *slot = arboard::Clipboard::new().ok();
             }
+            slot.is_some()
+        });
+        if !opened {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            continue;
         }
-        if let Some(cb) = clipboard.as_mut() {
-            if let Ok(text) = cb.get_text() {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                text.hash(&mut hasher);
-                let current = hasher.finish();
-                if current != last_hash {
-                    last_hash = current;
-                    bump_change_sequence();
-                    callback();
+
+        let changed = CLIPBOARD.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let Some(cb) = slot.as_mut() else {
+                return false;
+            };
+            let Ok(text) = cb.get_text() else {
+                return false;
+            };
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            text.hash(&mut hasher);
+            let current = hasher.finish();
+            LAST_HASH.with(|last| {
+                if current == last.get() {
+                    return false;
                 }
-            }
+                last.set(current);
+                true
+            })
+        });
+        if changed {
+            bump_change_sequence();
+            callback();
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }

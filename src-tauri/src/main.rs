@@ -194,7 +194,21 @@ fn main() {
     match app {
         Ok(app) => {
             info!(">>> [STARTUP] Tauri app built successfully.");
-            app.run(|_app_handle, _event| {});
+            app.run(|_app_handle, _event| {
+                // Clicking the Dock icon reopens the app. macOS unhides it, but our windows
+                // were ordered out by the paste path, so without this the user gets a running
+                // app in the menu bar and no window at all.
+                #[cfg(target_os = "macos")]
+                if matches!(_event, tauri::RunEvent::Reopen { .. }) {
+                    use tauri::Manager;
+                    let _ = _app_handle.show();
+                    if let Some(window) = _app_handle.get_webview_window("main") {
+                        let _ = window.set_focusable(true);
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            });
         }
         Err(e) => {
             error!(">>> [STARTUP] Failed to build tauri app: {}", e);
