@@ -465,7 +465,7 @@ pub fn seed_defaults(conn: &Connection) -> Result<()> {
         [],
     );
     let _ = conn.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('file_server_port', '12345')",
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('file_server_port', '18888')",
         [],
     );
 

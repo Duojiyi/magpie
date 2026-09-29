@@ -2,21 +2,23 @@ import { useCallback, useRef } from "react";
 import type { WheelEvent as ReactWheelEvent } from "react";
 
 type UseSearchScrollOptions = {
+  /** Persistent "show search box" setting: when on, the box is always visible. */
   showSearchBox: boolean;
-  setShowSearchBox: (val: boolean) => void;
+  /** Transient reveal (scroll-up at the top / search hotkey). Never persisted. */
+  searchRevealed: boolean;
+  setSearchRevealed: (val: boolean) => void;
   search: string;
   showSettings: boolean;
   showTagManager: boolean;
-  appSettings: Record<string, string>;
 };
 
 export const useSearchScroll = ({
   showSearchBox,
-  setShowSearchBox,
+  searchRevealed,
+  setSearchRevealed,
   search,
   showSettings,
-  showTagManager,
-  appSettings
+  showTagManager
 }: UseSearchScrollOptions) => {
   const scrollTriggerRef = useRef(0);
   const listScrollTopRef = useRef(0);
@@ -31,17 +33,18 @@ export const useSearchScroll = ({
 
   const handleMainWheel = useCallback(
     (e: ReactWheelEvent<HTMLElement>) => {
-      if (showSettings || showTagManager) return;
+      // Always-visible mode: nothing to reveal or hide (upstream #171).
+      if (showSettings || showTagManager || showSearchBox) return;
 
       if (
         e.deltaY < -5 &&
         (listScrollTopRef.current === 0 || isNaN(listScrollTopRef.current))
       ) {
         if (Date.now() - topReachedTimeRef.current > 250) {
-          if (!showSearchBox) {
+          if (!searchRevealed) {
             scrollTriggerRef.current += Math.abs(e.deltaY);
             if (scrollTriggerRef.current > 45) {
-              setShowSearchBox(true);
+              setSearchRevealed(true);
               scrollTriggerRef.current = 0;
             }
           }
@@ -52,24 +55,11 @@ export const useSearchScroll = ({
         scrollTriggerRef.current = 0;
       }
 
-      if (
-        e.deltaY > 10 &&
-        showSearchBox &&
-        search.trim() === "" &&
-        appSettings["app.show_search_box"] !== "true"
-      ) {
-        // See App.tsx note: do not persist setting when hiding temporary search.
-        setShowSearchBox(false);
+      if (e.deltaY > 10 && searchRevealed && search.trim() === "") {
+        setSearchRevealed(false);
       }
     },
-    [
-      showSettings,
-      showTagManager,
-      showSearchBox,
-      search,
-      appSettings,
-      setShowSearchBox
-    ]
+    [showSettings, showTagManager, showSearchBox, searchRevealed, search, setSearchRevealed]
   );
 
   return {

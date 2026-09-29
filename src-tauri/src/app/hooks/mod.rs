@@ -484,7 +484,9 @@ pub unsafe extern "system" fn keyboard_proc(
                 true
             };
 
-            if !allow_navigation {
+            // The preference only covers arrow-key selection; Escape must still dismiss the
+            // window. The panel is shown without activation, so the webview never sees the key.
+            if !allow_navigation && vk != 0x1B {
                 return CallNextHookEx(None, n_code, w_param, l_param);
             }
 

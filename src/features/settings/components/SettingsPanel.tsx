@@ -420,6 +420,9 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             setCloudSyncStatus(status);
         } catch (err) {
             console.error("Cloud sync now failed:", err);
+            // Surface the reason instead of leaving the panel on its previous state.
+            const message = typeof err === "string" ? err : err instanceof Error ? err.message : String(err);
+            setCloudSyncStatus(prev => ({ ...prev, state: "error", running: false, last_error: message }));
         } finally {
             setCloudSyncNowRunning(false);
         }

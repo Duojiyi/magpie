@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 interface UseSoundEffectsOptions {
@@ -7,25 +7,66 @@ interface UseSoundEffectsOptions {
   pasteSoundEnabled: boolean;
 }
 
+/** Idle time after the last beep before the AudioContext is suspended. */
+const SUSPEND_AFTER_IDLE_MS = 2000;
+
+/**
+ * Volume is stored on a 0..1 scale (the settings slider's range). Older installs stored
+ * 0..100, so anything above 1 is read as a percentage. Non-numeric values fall back to
+ * full volume; an explicit 0 stays 0.
+ */
+export const normalizeSoundVolume = (raw: unknown): number => {
+  const value = typeof raw === "number" ? raw : parseFloat(String(raw));
+  if (!Number.isFinite(value)) return 1;
+  const scaled = value > 1 ? value / 100 : value;
+  return Math.min(1, Math.max(0, scaled));
+};
+
 export const useSoundEffects = ({
   soundEnabled,
   soundVolume,
   pasteSoundEnabled
 }: UseSoundEffectsOptions) => {
+  // Volume and paste toggle are read at play time, so changing them never rebuilds the
+  // AudioContext (each rebuild re-acquires the system audio route).
+  const volumeRef = useRef(soundVolume);
+  const pasteEnabledRef = useRef(pasteSoundEnabled);
+  volumeRef.current = soundVolume;
+  pasteEnabledRef.current = pasteSoundEnabled;
+
   useEffect(() => {
-    const AudioContext =
+    // Sound off: no listener and no AudioContext at all. A live context holds an output
+    // stream on the audio device and, on macOS, competes for the Bluetooth route even
+    // while silent (upstream #174).
+    if (!soundEnabled) return;
+
+    const AudioContextCtor =
       window.AudioContext ||
       (window as Window & { webkitAudioContext?: typeof window.AudioContext }).webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
+    if (!AudioContextCtor) return;
 
-    const playCrispBeep = (durationSec = 0.1, baseFreqHz = 1400, volume = 0.35) => {
-      if (ctx.state === "suspended") ctx.resume();
+    let ctx: AudioContext | null = null;
+    let suspendTimer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
 
-      const t0 = ctx.currentTime;
+    // Created lazily on the first beep, suspended again once idle so the device is released.
+    const getContext = () => {
+      if (!ctx) ctx = new AudioContextCtor();
+      return ctx;
+    };
+
+    const scheduleSuspend = () => {
+      if (suspendTimer) clearTimeout(suspendTimer);
+      suspendTimer = setTimeout(() => {
+        if (ctx && ctx.state === "running") ctx.suspend().catch(() => {});
+      }, SUSPEND_AFTER_IDLE_MS);
+    };
+
+    const playCrispBeep = (c: AudioContext, durationSec = 0.1, baseFreqHz = 1400, volume = 0.35) => {
+      const t0 = c.currentTime;
       const tEnd = t0 + Math.max(0.05, durationSec);
 
-      const osc = ctx.createOscillator();
+      const osc = c.createOscillator();
       osc.type = "triangle";
 
       osc.frequency.setValueAtTime(baseFreqHz * 1.25, t0);
@@ -34,12 +75,12 @@ export const useSoundEffects = ({
         t0 + Math.min(0.18, durationSec * 0.25)
       );
 
-      const filter = ctx.createBiquadFilter();
+      const filter = c.createBiquadFilter();
       filter.type = "bandpass";
       filter.frequency.setValueAtTime(Math.min(4000, baseFreqHz * 1.3), t0);
       filter.Q.setValueAtTime(6, t0);
 
-      const gain = ctx.createGain();
+      const gain = c.createGain();
       gain.gain.setValueAtTime(0.0001, t0);
       gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume), t0 + 0.004);
 
@@ -48,12 +89,12 @@ export const useSoundEffects = ({
       gain.gain.exponentialRampToValueAtTime(0.0001, tEnd);
 
       const noiseDur = Math.min(0.03, durationSec * 0.1);
-      const sampleRate = ctx.sampleRate || 44100;
+      const sampleRate = c.sampleRate || 44100;
       const bufferSize = Math.floor(sampleRate * noiseDur);
 
       let noiseBuf: AudioBuffer | undefined;
       try {
-        noiseBuf = ctx.createBuffer(1, bufferSize > 0 ? bufferSize : 1, sampleRate);
+        noiseBuf = c.createBuffer(1, bufferSize > 0 ? bufferSize : 1, sampleRate);
         const data = noiseBuf.getChannelData(0);
         for (let i = 0; i < data.length; i++) {
           const decay = 1 - i / data.length;
@@ -64,20 +105,20 @@ export const useSoundEffects = ({
       }
 
       if (noiseBuf) {
-        const noiseNode = ctx.createBufferSource();
+        const noiseNode = c.createBufferSource();
         noiseNode.buffer = noiseBuf;
 
-        const noiseHP = ctx.createBiquadFilter();
+        const noiseHP = c.createBiquadFilter();
         noiseHP.type = "highpass";
         noiseHP.frequency.setValueAtTime(1500, t0);
 
-        const noiseGain = ctx.createGain();
+        const noiseGain = c.createGain();
         noiseGain.gain.setValueAtTime(Math.max(0.0001, volume * 0.25), t0);
         noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + noiseDur);
 
         noiseNode.connect(noiseHP);
         noiseHP.connect(noiseGain);
-        noiseGain.connect(ctx.destination);
+        noiseGain.connect(c.destination);
 
         noiseNode.start(t0);
         noiseNode.stop(t0 + noiseDur);
@@ -85,38 +126,42 @@ export const useSoundEffects = ({
 
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(c.destination);
 
       osc.start(t0);
       osc.stop(tEnd + 0.01);
     };
 
     const unlisten = listen<string>("play-sound", (event) => {
-      if (!soundEnabled) return;
-
       const type = event.payload;
-      if (type === "paste" && !pasteSoundEnabled) return;
-      const masterVol = Math.min(1, Math.max(0, soundVolume / 100));
+      if (type !== "copy" && type !== "paste") return;
+      if (type === "paste" && !pasteEnabledRef.current) return;
+      // The slider is 0..1; the old `/ 100` made full volume a gain of 0.01 (upstream #94).
+      const masterVol = normalizeSoundVolume(volumeRef.current);
+      if (masterVol <= 0) return;
 
+      const c = getContext();
       const play = () => {
+        if (disposed || c.state === "closed") return;
         try {
           if (type === "copy") {
-            playCrispBeep(0.06, 500, Math.min(1, masterVol * 0.8));
-          } else if (type === "paste") {
-            playCrispBeep(0.09, 950, Math.min(1, masterVol * 0.9));
+            playCrispBeep(c, 0.06, 500, Math.min(1, masterVol * 0.8));
+          } else {
+            playCrispBeep(c, 0.09, 950, Math.min(1, masterVol * 0.9));
             setTimeout(() => {
-              if (ctx.state !== "closed") {
-                playCrispBeep(0.075, 1150, Math.min(1, masterVol * 0.75));
+              if (!disposed && c.state === "running") {
+                playCrispBeep(c, 0.075, 1150, Math.min(1, masterVol * 0.75));
               }
             }, 110);
           }
         } catch (e) {
           console.error("Sound play error", e);
         }
+        scheduleSuspend();
       };
 
-      if (ctx.state === "suspended") {
-        ctx.resume().then(play).catch((err) => {
+      if (c.state === "suspended") {
+        c.resume().then(play).catch((err) => {
           console.error("Failed to resume audio ctx", err);
           play();
         });
@@ -126,8 +171,10 @@ export const useSoundEffects = ({
     });
 
     return () => {
+      disposed = true;
+      if (suspendTimer) clearTimeout(suspendTimer);
       unlisten.then((f) => f());
-      ctx.close();
+      if (ctx) ctx.close().catch(() => {});
     };
-  }, [soundEnabled, soundVolume, pasteSoundEnabled]);
+  }, [soundEnabled]);
 };

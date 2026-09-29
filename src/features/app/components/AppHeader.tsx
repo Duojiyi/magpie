@@ -209,7 +209,8 @@ const AppHeader = ({
                   onClick={() => { setShowTagFilter(true); setEditingTagsId(null); }}
                   onFocus={() => {
                     invoke("activate_window_focus").catch(console.error);
-                    setShowTagFilter(true);
+                    // The tag dropdown opens on click only: programmatic focus (search
+                    // hotkey) used to pop it open as a blank overlay over the list.
                     setSearchIsFocused(true);
                     setEditingTagsId(null);
                   }}
@@ -255,6 +256,13 @@ const AppHeader = ({
                   }
                 }}
               >
+                <button
+                  className={`btn-icon type-filter-pill ${typeFilter === null ? 'active' : ''}`}
+                  onClick={() => setTypeFilter(null)}
+                  title={t('type_all') || 'All'}
+                >
+                  {t('type_all') || 'All'}
+                </button>
                 {['text', 'image', 'file', 'url', 'code', 'video', 'rich_text'].map(t => (
                   <button
                     key={t}

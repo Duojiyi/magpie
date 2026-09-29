@@ -221,7 +221,7 @@ pub async fn toggle_file_server(
                 return Ok("Server already running".to_string());
             }
         }
-        let target_port = port.unwrap_or(12345);
+        let target_port = port.unwrap_or(18888);
         let (listener, actual_port) = bind_listener(target_port).await;
         if actual_port == 0 {
             return Err("Failed to bind any port".to_string());

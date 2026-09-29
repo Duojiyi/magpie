@@ -521,8 +521,21 @@ impl PipelineStage for PersistenceStage {
             let data_dir = app_data_dir.0.lock().unwrap().clone();
             let conn = db_state.conn.lock().unwrap();
 
+            let merged_into_existing = entry.id > 0;
             if let Ok(id) = db_state.repo.save_with_conn(&conn, entry, Some(&data_dir)) {
                 entry.id = id;
+                // A dedupe merge UPDATEs an existing row and keeps its pin, order, use count
+                // and tags, but `entry` still carries the fresh capture's defaults. The UI
+                // replaces its row with this payload, so without syncing them back a pinned
+                // item showed up unpinned until the next refetch (upstream #152).
+                if merged_into_existing {
+                    if let Ok(Some(stored)) = db_state.repo.get_entry_by_id_with_conn(&conn, id) {
+                        entry.is_pinned = stored.is_pinned;
+                        entry.pinned_order = stored.pinned_order;
+                        entry.use_count = stored.use_count;
+                        entry.tags = stored.tags;
+                    }
+                }
                 if let Ok(deleted_ids) = db_state
                     .repo
                     .enforce_limit_with_conn(&conn, Some(&data_dir))

@@ -368,6 +368,7 @@ export const translations = {
         type_video: "视频",
         type_text: "文本",
         type_rich_text: "富文本",
+        type_all: "全部",
 
         // Language
         language: "语言",
@@ -903,6 +904,7 @@ export const translations = {
         type_video: "Video",
         type_text: "Text",
         type_rich_text: "Rich Text",
+        type_all: "All",
 
         // Language
         language: "Language",
@@ -1416,6 +1418,7 @@ export const translations = {
         type_video: "影片",
         type_text: "文字",
         type_rich_text: "富文本",
+        type_all: "全部",
 
         // Language
         language: "語言",

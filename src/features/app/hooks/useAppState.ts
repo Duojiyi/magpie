@@ -158,7 +158,7 @@ export const useAppState = (): AppState => {
   const [cloudSyncContentPrefs, setCloudSyncContentPrefs] =
     useState<CloudSyncContentPrefs>(DEFAULT_CLOUD_SYNC_CONTENT_PREFS);
   const [fileServerEnabled, setFileServerEnabled] = useState(false);
-  const [fileServerPort, setFileServerPort] = useState("12345");
+  const [fileServerPort, setFileServerPort] = useState("18888");
   const [localIp, setLocalIp] = useState("");
   const [availableIps, setAvailableIps] = useState<string[]>([]);
   const [actualPort, setActualPort] = useState("");

@@ -613,10 +613,23 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
         // --- Core processing logic (same as before) ---
 
         // 1. Check Files
+        // With file capture off, a file drop must not end processing: QQ/QQNT (right-click →
+        // copy image) and screenshot tools put the image on the clipboard both as pixels and
+        // as a CF_HDROP of their cache file. Claiming the event here meant the image branch
+        // never ran and nothing was recorded (upstream #163). Plain Explorer file copies carry
+        // no image or text formats, so falling through still records nothing for them.
+        let capture_files_enabled = should_capture_file_entries(
+            app.state::<SettingsState>()
+                .capture_files
+                .load(Ordering::Relaxed),
+        );
         unsafe {
-            if let Some(files) =
+            let dropped_files = if capture_files_enabled {
                 crate::infrastructure::windows_api::win_clipboard::get_clipboard_files()
-            {
+            } else {
+                None
+            };
+            if let Some(files) = dropped_files {
                 let content = files.join("\n");
                 if !content.is_empty() {
                     let is_new = content != monitor_state.last_text;
@@ -1033,7 +1046,11 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                 if !is_empty_clipboard_content(&text) {
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
                     use std::hash::{Hash, Hasher};
-                    normalized_text.hash(&mut hasher);
+                    // Hash the same key the writer does (clipboard_ops::calculate_content_hash
+                    // trims): hashing the untrimmed text meant anything we wrote with leading
+                    // or trailing whitespace never matched the echo guard and was captured
+                    // again as a "new" copy. Stored content is still the untrimmed text.
+                    normalized_text.trim().hash(&mut hasher);
                     let current_hash = hasher.finish();
 
                     let last_app_hash = crate::LAST_APP_SET_HASH.load(Ordering::SeqCst);

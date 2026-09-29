@@ -2109,32 +2109,50 @@ async fn move_webdav_resource(
 ) -> AppResult<bool> {
     let from_url = webdav_url_for(cfg, from_relative);
     let destination = webdav_url_for(cfg, to_relative);
-    let resp = webdav_send_with_retry(|| {
-        let method = Method::from_bytes(b"MOVE").expect("MOVE is a valid HTTP method");
-        webdav_with_auth(
-            client
-                .request(method, &from_url)
-                .header("Destination", destination.clone())
-                .header("Overwrite", "T"),
-            cfg,
-        )
-    })
-    .await?;
+    // Single attempt, no retry: MOVE is only an atomicity optimisation over a direct PUT.
+    // Some providers (123pan) answer every MOVE with 500; retrying that status just burned
+    // ~4 s per file before the whole sync failed (upstream #164).
+    let method = Method::from_bytes(b"MOVE").expect("MOVE is a valid HTTP method");
+    let resp = webdav_with_auth(
+        client
+            .request(method, &from_url)
+            .header("Destination", destination)
+            .header("Overwrite", "T"),
+        cfg,
+    )
+    .send()
+    .await
+    .map_err(|e| AppError::Network(e.to_string()))?;
 
-    if resp.status().is_success() {
+    let status = resp.status();
+    check_webdav_status_for_backoff(status);
+    if status.is_success() {
         return Ok(true);
     }
 
-    if matches!(resp.status().as_u16(), 405 | 409 | 412 | 501) {
-        return Ok(false);
-    }
+    // Any refusal falls back to a direct PUT. Remember it for this server so later uploads
+    // skip the temp-file + MOVE round trips entirely.
+    eprintln!(
+        "[cloud_sync] WebDAV MOVE rejected ({}), falling back to direct PUT for {}",
+        status, cfg.webdav_url
+    );
+    webdav_move_unsupported()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(cfg.webdav_url.trim_end_matches('/').to_string());
+    Ok(false)
+}
 
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    Err(AppError::Network(format!(
-        "webdav MOVE publish failed for {} -> {}: {} {}",
-        from_url, destination, status, text
-    )))
+fn webdav_move_unsupported() -> &'static Mutex<HashSet<String>> {
+    static CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn webdav_move_known_unsupported(cfg: &CloudSyncConfig) -> bool {
+    webdav_move_unsupported()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(cfg.webdav_url.trim_end_matches('/'))
 }
 
 async fn upload_webdav_bytes_resource(
@@ -2181,6 +2199,9 @@ async fn upload_webdav_bytes_resource(
     }
 
     let final_url = webdav_url_for(cfg, relative_path);
+    if webdav_move_known_unsupported(cfg) {
+        return upload_target(client, cfg, &final_url, &body, content_type, label).await;
+    }
     let temp_relative = format!(
         "{}.uploading.{}.{}.tmp",
         relative_path.trim_end_matches('/'),

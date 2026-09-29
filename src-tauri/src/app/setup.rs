@@ -1,7 +1,7 @@
 #[cfg(target_os = "windows")]
 use crate::app::hooks::{keyboard_proc, mouse_proc};
 #[cfg(target_os = "windows")]
-use crate::app::system::tray_subclass_proc;
+use crate::app::system::{register_tray_session_notifications, tray_subclass_proc};
 use crate::app::window_manager::{release_win_keys, restore_last_focus, toggle_window};
 use crate::app_state::{
     AppDataDir, EncryptionQueueState, PasteQueue, SessionHistory, SettingsState,
@@ -895,6 +895,28 @@ fn start_services(app: &App, s: &StartupSettings, app_handle: AppHandle) {
     }
 }
 
+/// Whether a screen edge of the current monitor is actually shared with a neighbouring
+/// monitor along the window's span. Such an edge is not a screen edge: docking there tucks
+/// the window onto the neighbour, where the next poll measures it against the wrong monitor
+/// and it jumps or flickers across the boundary (upstream #74 / PR #155).
+///
+/// `monitors` are `(x, y, width, height)`; `window` is `(left, top, right, bottom)`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn edge_borders_other_monitor(
+    monitors: &[(i32, i32, i32, i32)],
+    dock: DockPosition,
+    edge: i32,
+    window: (i32, i32, i32, i32),
+) -> bool {
+    let (left, top, right, bottom) = window;
+    monitors.iter().any(|&(x, y, w, h)| match dock {
+        DockPosition::Left => x + w == edge && y < bottom && y + h > top,
+        DockPosition::Right => x == edge && y < bottom && y + h > top,
+        DockPosition::Top => y + h == edge && x < right && x + w > left,
+        DockPosition::None => false,
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn start_edge_docking_monitor(app_handle: AppHandle) {
     std::thread::spawn(move || {
@@ -1032,12 +1054,36 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
 
                 let hide_size = 3;
 
+                let monitor_rects: Vec<(i32, i32, i32, i32)> = window
+                    .available_monitors()
+                    .map(|ms| {
+                        ms.iter()
+                            .map(|m| {
+                                let (p, s) = (m.position(), m.size());
+                                (p.x, p.y, s.width as i32, s.height as i32)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let shared = |dock: DockPosition, edge: i32| {
+                    edge_borders_other_monitor(
+                        &monitor_rects,
+                        dock,
+                        edge,
+                        (rect.left, rect.top, rect.right, rect.bottom),
+                    )
+                };
+
                 let mut dock = DockPosition::None;
-                if rect.top <= screen_top + threshold {
+                if rect.top <= screen_top + threshold && !shared(DockPosition::Top, screen_top) {
                     dock = DockPosition::Top;
-                } else if rect.left <= screen_left + threshold {
+                } else if rect.left <= screen_left + threshold
+                    && !shared(DockPosition::Left, screen_left)
+                {
                     dock = DockPosition::Left;
-                } else if rect.right >= screen_right - threshold {
+                } else if rect.right >= screen_right - threshold
+                    && !shared(DockPosition::Right, screen_right)
+                {
                     dock = DockPosition::Right;
                 }
 
@@ -1430,6 +1476,7 @@ fn setup_taskbar_listener(app: &App) {
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(hwnd) = window.hwnd() {
                     let _ = SetWindowSubclass(HWND(hwnd.0), Some(tray_subclass_proc), 1337, 0);
+                    register_tray_session_notifications(HWND(hwnd.0));
                 }
             }
         }
@@ -1504,7 +1551,11 @@ pub fn handle_global_shortcut(app: &AppHandle, shortcut: &tauri_plugin_global_sh
             if ignore_background_only("search") {
                 return;
             }
-            toggle_window(app);
+            // Pressed while the panel is already open, the search hotkey must focus the
+            // search box, not toggle the panel closed underneath it.
+            if !panel_visible {
+                toggle_window(app);
+            }
             let _ = app.emit("focus-search-input", ());
         }
     }
@@ -1547,10 +1598,6 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 return;
             }
             api.prevent_close();
-            
-            // Clear vibrancy to stop GPU rendering
-            #[cfg(target_os = "windows")]
-            let _ = window_vibrancy::clear_vibrancy(&window);
             
             let _ = window.hide();
             crate::app::window_manager::notify_window_hidden(window.app_handle());
@@ -1660,10 +1707,6 @@ fn handle_blur(window: &tauri::Window) {
         let down = IS_MOUSE_BUTTON_DOWN.load(Ordering::SeqCst) || is_pointer_button_down();
         if !down && matches!(w.is_focused(), Ok(false)) {
             if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
-                // Clear vibrancy to stop GPU rendering
-                #[cfg(target_os = "windows")]
-                let _ = window_vibrancy::clear_vibrancy(&w);
-                
                 let _ = w.hide();
                 crate::app::window_manager::notify_window_hidden(w.app_handle());
                 NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
@@ -1744,5 +1787,46 @@ mod portable_degrade_tests {
         );
         assert!(!used, "标准安装不应标记为便携模式");
         assert!(!degraded, "标准安装不应触发便携降级");
+    }
+}
+
+#[cfg(test)]
+mod edge_docking_tests {
+    use super::edge_borders_other_monitor;
+    use crate::global_state::DockPosition;
+
+    // Primary 1920x1080 at the origin, a second 1920x1080 to its right.
+    const SIDE_BY_SIDE: [(i32, i32, i32, i32); 2] = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
+
+    #[test]
+    fn edge_between_side_by_side_monitors_is_shared() {
+        let window = (1600, 100, 1920, 700);
+        assert!(edge_borders_other_monitor(&SIDE_BY_SIDE, DockPosition::Right, 1920, window));
+        let window = (1920, 100, 2240, 700);
+        assert!(edge_borders_other_monitor(&SIDE_BY_SIDE, DockPosition::Left, 1920, window));
+    }
+
+    #[test]
+    fn outer_screen_edges_still_dock() {
+        let window = (0, 100, 320, 700);
+        assert!(!edge_borders_other_monitor(&SIDE_BY_SIDE, DockPosition::Left, 0, window));
+        let window = (3520, 100, 3840, 700);
+        assert!(!edge_borders_other_monitor(&SIDE_BY_SIDE, DockPosition::Right, 3840, window));
+        assert!(!edge_borders_other_monitor(&SIDE_BY_SIDE, DockPosition::Top, 0, window));
+    }
+
+    #[test]
+    fn neighbour_that_does_not_overlap_the_window_span_is_ignored() {
+        // Second monitor sits to the right but lower; the window is above its top edge.
+        let monitors = [(0, 0, 1920, 1080), (1920, 800, 1920, 1080)];
+        let window = (1600, 100, 1920, 600);
+        assert!(!edge_borders_other_monitor(&monitors, DockPosition::Right, 1920, window));
+    }
+
+    #[test]
+    fn stacked_monitor_above_makes_the_top_edge_shared() {
+        let monitors = [(0, 0, 1920, 1080), (0, -1080, 1920, 1080)];
+        let window = (100, 0, 420, 600);
+        assert!(edge_borders_other_monitor(&monitors, DockPosition::Top, 0, window));
     }
 }

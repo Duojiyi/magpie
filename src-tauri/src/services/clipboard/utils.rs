@@ -470,16 +470,46 @@ fn normalize_plain_text_layout(text: &str) -> String {
     lines[start..end].join("\n")
 }
 
+/// Decode HTML character references in one pass: the common named entities plus every
+/// decimal / hex numeric reference. A single pass matters — chained `replace` calls decoded
+/// `&amp;lt;` into `<` (the text `&lt;` was intended), and adding numeric references to
+/// that chain would have turned the literal text `&#32;` into a space. Unknown names and
+/// invalid code points are left untouched. NBSP becomes a plain space, as before.
 fn decode_basic_html_entities(text: &str) -> String {
-    text.replace("&nbsp;", " ")
-        .replace("&#160;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#34;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
+    static ENTITY_RE: OnceLock<Regex> = OnceLock::new();
+
+    if !text.contains('&') {
+        return text.to_string();
+    }
+    ENTITY_RE
+        .get_or_init(|| Regex::new(r"&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z]+));").unwrap())
+        .replace_all(text, |caps: &regex::Captures| {
+            let code_point = if let Some(dec) = caps.get(1) {
+                dec.as_str().parse::<u32>().ok()
+            } else if let Some(hex) = caps.get(2) {
+                u32::from_str_radix(hex.as_str(), 16).ok()
+            } else {
+                None
+            };
+            let decoded = match code_point {
+                Some(0xA0) => Some(' '),
+                Some(cp) => char::from_u32(cp).filter(|c| *c != '\0'),
+                None => match caps.get(3).map(|m| m.as_str().to_ascii_lowercase()).as_deref() {
+                    Some("nbsp") => Some(' '),
+                    Some("amp") => Some('&'),
+                    Some("lt") => Some('<'),
+                    Some("gt") => Some('>'),
+                    Some("quot") => Some('"'),
+                    Some("apos") => Some('\''),
+                    _ => None,
+                },
+            };
+            match decoded {
+                Some(c) => c.to_string(),
+                None => caps[0].to_string(),
+            }
+        })
+        .into_owned()
 }
 
 fn is_office_style_definition_text(text: &str) -> bool {
@@ -1344,6 +1374,36 @@ mod tests {
         // Consecutive tabs mean empty cells; collapsing them would shift later columns left.
         let html = "<table><tr><td>A1</td><td></td><td>C1</td></tr></table>";
         assert_eq!(extract_plain_text_from_htmlish(html), "A1\t\tC1");
+    }
+
+    #[test]
+    fn numeric_html_entities_are_decoded() {
+        assert_eq!(
+            extract_plain_text_from_htmlish("<span>A&#32;B&#x20;C&#20013;&#x4E2D;</span>"),
+            "A B C中中"
+        );
+        // With the entity decoded the HTML text matches the plain flavour, so the plain
+        // text (and its whitespace) wins instead of the raw "&#32;".
+        assert_eq!(
+            derive_rich_text_content("First Second", Some("<span>First&#32;Second</span>")),
+            "First Second"
+        );
+    }
+
+    #[test]
+    fn html_entities_decode_exactly_one_level() {
+        assert_eq!(
+            extract_plain_text_from_htmlish("<p>&amp;lt;div&amp;gt; and &amp;#32;</p>"),
+            "&lt;div&gt; and &#32;"
+        );
+    }
+
+    #[test]
+    fn invalid_or_unknown_entities_are_kept_verbatim() {
+        assert_eq!(
+            extract_plain_text_from_htmlish("<p>&#xD800; &#99999999; &bogus; R&D</p>"),
+            "&#xD800; &#99999999; &bogus; R&D"
+        );
     }
 
     #[test]

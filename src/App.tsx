@@ -172,7 +172,6 @@ const App = () => {
     setPersistentLimitEnabled,
     persistentLimit,
     setPersistentLimit,
-    appSettings,
     setAppSettings,
     setDefaultApps,
     chatMode,
@@ -404,13 +403,16 @@ const App = () => {
     return table[k] || translations['en'][k] || key;
   }, [language]);
 
+  // Transient search-box reveal (scroll-up at the top / search hotkey). Kept apart from the
+  // persistent `showSearchBox` setting so revealing the box never flips the settings toggle.
+  const [searchRevealed, setSearchRevealed] = useState(false);
   const { handleListScroll: handleSearchScroll, handleMainWheel } = useSearchScroll({
     showSearchBox,
-    setShowSearchBox,
+    searchRevealed,
+    setSearchRevealed,
     search,
     showSettings,
-    showTagManager: effectiveShowTagManager,
-    appSettings
+    showTagManager: effectiveShowTagManager
   });
 
   const showScrollTopVisible = showScrollTop && scrollTopButtonEnabled;
@@ -677,7 +679,7 @@ const App = () => {
       setShowTagManager(false);
       setChatMode(false);
       setShowEmojiPanel(false);
-      setShowSearchBox(true);
+      setSearchRevealed(true);
       setSearchIsFocused(true);
       invoke("activate_window_focus")
         .catch(console.error)
@@ -696,7 +698,6 @@ const App = () => {
     setShowTagManager,
     setChatMode,
     setShowEmojiPanel,
-    setShowSearchBox,
     setSearchIsFocused,
     searchInputRef
   ]);
@@ -713,6 +714,7 @@ const App = () => {
       setTypeFilter(null);
       setShowTagFilter(false);
       setSearch("");
+      setSearchRevealed(false);
     });
 
     return () => {
@@ -1106,7 +1108,7 @@ const App = () => {
         isWindowPinned={isWindowPinned}
         setIsWindowPinned={setIsWindowPinned}
         clearHistory={clearHistory}
-        showSearchBox={showSearchBox}
+        showSearchBox={showSearchBox || searchRevealed}
         search={search}
         setSearch={setSearch}
         setIsComposing={setIsComposing}

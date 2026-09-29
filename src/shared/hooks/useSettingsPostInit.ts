@@ -4,6 +4,7 @@ import type { MutableRefObject } from "react";
 import type { AiProfile, AppCleanupPolicy } from "../../features/settings/types";
 import type { QuickPasteModifier, CloudSyncContentPrefs, CardDensity } from "../../features/app/types";
 import { DEFAULT_CLOUD_SYNC_CONTENT_PREFS } from "../../features/app/types";
+import { normalizeSoundVolume } from "./useSoundEffects";
 
 // Never source a default API key from a VITE_ env var: Vite inlines those into the
 // shipped JS bundle, so a real key would be extractable from any distributed build
@@ -413,7 +414,9 @@ export const useSettingsPostInit = ({
     if (settings["app.sound_enabled"] === "true") setSoundEnabled(true);
     setPasteSoundEnabled(settings["app.sound_paste_enabled"] !== "false");
     if (settings["app.sound_volume"]) {
-      setSoundVolume(parseFloat(settings["app.sound_volume"]) || 1.0);
+      // Legacy installs stored 0..100; the slider is 0..1. useSettingsSync writes the
+      // normalized value back, so the migration happens once.
+      setSoundVolume(normalizeSoundVolume(settings["app.sound_volume"]));
     }
     if (settings["ai_enabled"]) setAiEnabled(settings["ai_enabled"] === "true");
     if (settings["ai_target_lang"]) setAiTargetLang(settings["ai_target_lang"]);
