@@ -558,7 +558,10 @@ fn is_cloud_clipboard_content_type(content_type: &str) -> bool {
 }
 
 fn is_setting_sync_eligible(key: &str) -> bool {
-    !matches!(
+    // `db.*` is this database's own migration/maintenance state (alignment done, DPAPI rows
+    // left); a peer adopting it would skip its own passes.
+    !key.starts_with("db.")
+        && !matches!(
         key,
         "app.anon_id"
             | "app.emoji_favorites"
