@@ -9,7 +9,8 @@ use windows::Win32::System::DataExchange::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+    GetWindowLongPtrW,
     RegisterClassW, SetWindowLongPtrW, GWLP_USERDATA, HWND_MESSAGE, MSG, WM_CLIPBOARDUPDATE,
     WNDCLASSW,
 };
@@ -34,51 +35,61 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
 
             RegisterClassW(&wnd_class);
 
-            let hwnd = match CreateWindowExW(
-                Default::default(),
-                PCWSTR(window_class_w.as_ptr()),
-                PCWSTR(std::ptr::null()),
-                Default::default(),
-                0,
-                0,
-                0,
-                0,
-                Some(HWND_MESSAGE), // Use HWND_MESSAGE for invisible message-only window
-                None,
-                Some(HINSTANCE(instance.0)),
-                None,
-            ) {
-                Ok(hwnd) => hwnd,
-                Err(e) => {
-                    eprintln!(
-                        "[ERROR] Failed to create clipboard listener window: {:?}",
-                        e
-                    );
-                    return;
+            // Retry setup instead of giving up: a failure here (e.g. very early at login)
+            // used to stop clipboard capture for the whole session without any visible sign.
+            loop {
+                let hwnd = match CreateWindowExW(
+                    Default::default(),
+                    PCWSTR(window_class_w.as_ptr()),
+                    PCWSTR(std::ptr::null()),
+                    Default::default(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    Some(HWND_MESSAGE), // Use HWND_MESSAGE for invisible message-only window
+                    None,
+                    Some(HINSTANCE(instance.0)),
+                    None,
+                ) {
+                    Ok(hwnd) => hwnd,
+                    Err(e) => {
+                        eprintln!(
+                            "[ERROR] Failed to create clipboard listener window: {:?}; retrying",
+                            e
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        continue;
+                    }
+                };
+
+                // Wrap callback in a Box to store in window user data
+                let boxed_callback = Box::new(callback.clone());
+                let ptr = Box::into_raw(boxed_callback);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
+
+                if let Err(e) = AddClipboardFormatListener(hwnd) {
+                    eprintln!("[ERROR] Failed to add clipboard listener: {:?}; retrying", e);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                    let _ = DestroyWindow(hwnd);
+                    let _ = Box::from_raw(ptr);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    continue;
                 }
-            };
 
-            // Wrap callback in a Box to store in window user data
-            let boxed_callback = Box::new(callback);
-            let ptr = Box::into_raw(boxed_callback);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
+                println!(">>> [CLIPBOARD] Windows event-driven listener started.");
 
-            if let Err(e) = AddClipboardFormatListener(hwnd) {
-                eprintln!("[ERROR] Failed to add clipboard listener: {:?}", e);
+                let mut msg = MSG::default();
+                // GetMessageW returns -1 on error; `as_bool()` would treat that as a message.
+                while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                    DispatchMessageW(&msg);
+                }
+
+                let _ = RemoveClipboardFormatListener(hwnd);
+                // Cleanup callback
                 let _ = Box::from_raw(ptr);
-                return;
+                break;
             }
-
-            println!(">>> [CLIPBOARD] Windows event-driven listener started.");
-
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                DispatchMessageW(&msg);
-            }
-
-            let _ = RemoveClipboardFormatListener(hwnd);
-            // Cleanup callback
-            let _ = Box::from_raw(ptr);
         }
     });
 

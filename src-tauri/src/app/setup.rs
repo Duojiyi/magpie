@@ -413,7 +413,41 @@ pub struct StartupSettings {
     pub auto_close_server: bool,
 }
 
-fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
+/// Stores freshly loaded settings into the live `SettingsState` (used by reset_settings:
+/// the frontend reload only re-applies a few setters, so everything else kept its old
+/// runtime value, e.g. delete-after-paste kept deleting while the UI showed it off).
+pub(crate) fn apply_runtime_settings(state: &SettingsState, s: &StartupSettings) {
+    use std::sync::atomic::Ordering::Relaxed;
+    state.deduplicate.store(s.deduplicate, Relaxed);
+    state.persistent.store(s.persistent, Relaxed);
+    state.file_server_auto_close.store(s.auto_close_server, Relaxed);
+    *state.theme.lock().unwrap() = s.theme.clone();
+    state.capture_files.store(s.capture_files, Relaxed);
+    state.capture_rich_text.store(s.capture_rich_text, Relaxed);
+    state.auto_copy_file.store(s.auto_copy_file, Relaxed);
+    state.silent_start.store(s.silent_start, Relaxed);
+    state.delete_after_paste.store(s.delete_after_paste, Relaxed);
+    state.privacy_protection.store(s.privacy_protection, Relaxed);
+    *state.privacy_protection_kinds.lock().unwrap() =
+        s.privacy_kinds.split(',').map(|x| x.trim().to_string()).collect();
+    *state.privacy_protection_custom_rules.lock().unwrap() =
+        s.privacy_custom.lines().map(|x| x.trim().to_string()).collect();
+    *state.cleanup_rules.lock().unwrap() = s.cleanup_rules.clone();
+    *state.app_cleanup_policies.lock().unwrap() = s.app_cleanup_policies.clone();
+    state.sequential_mode.store(s.sequential_mode, Relaxed);
+    *state.sequential_paste_hotkey.lock().unwrap() = s.sequential_hotkey.clone();
+    *state.rich_paste_hotkey.lock().unwrap() = s.rich_paste_hotkey.clone();
+    *state.search_hotkey.lock().unwrap() = s.search_hotkey.clone();
+    *state.quick_paste_modifier.lock().unwrap() = s.quick_paste_modifier.clone();
+    state.sound_enabled.store(s.sound_enabled, Relaxed);
+    state.hide_tray_icon.store(s.hide_tray_icon, Relaxed);
+    state.edge_docking.store(s.edge_docking, Relaxed);
+    state.follow_mouse.store(s.follow_mouse, Relaxed);
+    state.arrow_key_selection.store(s.arrow_key_selection, Relaxed);
+    *state.main_hotkey.lock().unwrap() = s.main_hotkey.clone();
+}
+
+pub(crate) fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
     StartupSettings {
         // 主题统一兜底为 ink，并先经 normalize_theme_id 归一旧别名（mica/acrylic/sakura/retro/
         // sticky-note/store-* 等），使后端启动状态直接持有迁移后的新主题值，

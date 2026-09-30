@@ -519,64 +519,15 @@ pub fn reset_settings(
         .set("app.anon_id", &new_id)
         .map_err(AppError::from)?;
 
-    let main_hotkey = state
-        .settings_repo
-        .get("app.hotkey")
-        .unwrap_or(Some("Alt+C".to_string()))
-        .unwrap_or("Alt+C".to_string());
-    let sequential_mode = state
-        .settings_repo
-        .get("app.sequential_mode")
-        .unwrap_or(Some("false".to_string()))
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let seq_hotkey = state
-        .settings_repo
-        .get("app.sequential_hotkey")
-        .unwrap_or(Some("Alt+V".to_string()))
-        .unwrap_or("Alt+V".to_string());
-    let rich_hotkey = state
-        .settings_repo
-        .get("app.rich_paste_hotkey")
-        .unwrap_or(Some("Ctrl+Shift+Z".to_string()))
-        .unwrap_or("Ctrl+Shift+Z".to_string());
-    let search_hotkey = state
-        .settings_repo
-        .get("app.search_hotkey")
-        .unwrap_or(Some("Alt+F".to_string()))
-        .unwrap_or("Alt+F".to_string());
-    let quick_paste_modifier = state
-        .settings_repo
-        .get("app.quick_paste_modifier")
-        .unwrap_or(Some("disabled".to_string()))
-        .unwrap_or("disabled".to_string());
-
-    settings_state
-        .sequential_mode
-        .store(sequential_mode, Ordering::Relaxed);
-    {
-        let mut guard = settings_state.main_hotkey.lock().unwrap();
-        *guard = main_hotkey.clone();
-    }
-    {
-        let mut guard = settings_state.sequential_paste_hotkey.lock().unwrap();
-        *guard = seq_hotkey.clone();
-    }
-    {
-        let mut guard = settings_state.rich_paste_hotkey.lock().unwrap();
-        *guard = rich_hotkey.clone();
-    }
-    {
-        let mut guard = settings_state.search_hotkey.lock().unwrap();
-        *guard = search_hotkey.clone();
-    }
-    {
-        let mut guard = settings_state.quick_paste_modifier.lock().unwrap();
-        *guard = normalize_quick_paste_modifier(&quick_paste_modifier).to_string();
-    }
-    {
-        let mut guard = crate::global_state::HOTKEY_STRING.lock().unwrap();
-        *guard = main_hotkey.clone();
+    // Bring every runtime flag back in line with the reseeded defaults (not only hotkeys):
+    // capture, paste and privacy code read SettingsState, not the database.
+    let mut defaults = crate::app::setup::load_settings(&state.settings_repo);
+    defaults.quick_paste_modifier =
+        normalize_quick_paste_modifier(&defaults.quick_paste_modifier).to_string();
+    crate::app::setup::apply_runtime_settings(&settings_state, &defaults);
+    *crate::global_state::HOTKEY_STRING.lock().unwrap() = defaults.main_hotkey.clone();
+    if let Some(tray) = app.tray_by_id("main_tray") {
+        let _ = tray.set_visible(!defaults.hide_tray_icon);
     }
 
     crate::app::commands::hotkey_cmd::sync_registered_hotkeys(&app)
