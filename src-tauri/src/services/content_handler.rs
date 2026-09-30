@@ -53,7 +53,15 @@ pub async fn open_content(
 
     let app_path = get_app_path_for_content_type(&state, &content_type)?;
     let mut temp_path = std::env::temp_dir();
-    let filename = format!("Magpie_Clip_{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    // Unique per open: a per-second name let two opens share one temp file, and the first
+    // item's watcher then wrote the second item's text back into the first item.
+    // ponytail: temp files are left in %TEMP% for the OS to clean; delete on watcher exit if
+    // plaintext copies of sensitive items become a concern.
+    let filename = format!(
+        "Magpie_Clip_{}_{}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S"),
+        uuid::Uuid::new_v4().simple()
+    );
     let mut use_direct_path = false;
 
     // Handle links/URLs

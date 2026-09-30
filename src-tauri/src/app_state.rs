@@ -47,6 +47,30 @@ pub struct PasteQueue(pub Mutex<PasteQueueState>);
 
 pub struct SessionHistory(pub Mutex<VecDeque<ClipboardEntry>>);
 
+/// Session history cap.
+pub const SESSION_HISTORY_LIMIT: usize = 500;
+
+/// Trims `session` to [`SESSION_HISTORY_LIMIT`], dropping the oldest session-only items
+/// first, and returns the ids the UI must be told were removed. Promoted items (id > 0:
+/// pinned/tagged, saved to the database) still exist, so they are never reported removed;
+/// they are only dropped (silently) when nothing else is left to evict.
+pub fn trim_session_history(session: &mut VecDeque<ClipboardEntry>) -> Vec<i64> {
+    let mut removed = Vec::new();
+    while session.len() > SESSION_HISTORY_LIMIT {
+        match session.iter().position(|item| item.id < 0) {
+            Some(index) => {
+                if let Some(item) = session.remove(index) {
+                    removed.push(item.id);
+                }
+            }
+            None => {
+                session.pop_front();
+            }
+        }
+    }
+    removed
+}
+
 pub struct AppDataDir(pub Mutex<std::path::PathBuf>);
 
 pub struct EncryptionQueueState(pub EncryptionQueue);

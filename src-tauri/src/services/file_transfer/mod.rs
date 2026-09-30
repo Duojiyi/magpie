@@ -25,6 +25,29 @@ pub use models::*;
 pub use utils::*;
 
 pub static SERVER_HANDLE: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+/// Shutdown signal of the running server (see `AppState::shutdown`).
+static SERVER_SHUTDOWN: Mutex<Option<tokio_util::sync::CancellationToken>> = Mutex::new(None);
+
+/// Refuses every request once the server was switched off. Aborting the accept loop does
+/// not close connections already accepted, so keep-alive clients could otherwise go on
+/// uploading and reading the chat; `Connection: close` makes them drop the connection.
+async fn reject_after_shutdown(
+    axum::extract::State(shutdown): axum::extract::State<tokio_util::sync::CancellationToken>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+    if shutdown.is_cancelled() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONNECTION, "close")],
+            "File server is off",
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
 
 /// Setting that holds the LAN access key. Local-only: excluded from settings sync and from
 /// copied diagnostics.
@@ -205,14 +228,9 @@ pub fn get_chat_history(app_handle: AppHandle) -> Vec<Message> {
 
 #[tauri::command]
 pub fn send_file_to_client(app_handle: AppHandle, file_path: String) -> Result<(), String> {
-    let shared_state = app_handle.state::<SharedFileState>();
     update_activity(&app_handle);
 
-    let token = uuid::Uuid::new_v4().to_string();
-    if let Ok(mut map) = shared_state.0.lock() {
-        map.insert(token.clone(), file_path.clone());
-    }
-
+    // No token here: append_message registers the download token for the message itself.
     let server_info = app_handle.state::<ServerInfo>();
     let port = server_info.port.load(Ordering::Relaxed);
     let ip = server_info.ip.lock().unwrap().clone();
@@ -353,8 +371,10 @@ pub async fn toggle_file_server(
             *ip_guard = actual_ip.clone();
         }
         let app_handle_clone = app_handle.clone();
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        *SERVER_SHUTDOWN.lock().unwrap() = Some(shutdown.clone());
         let h = tokio::spawn(async move {
-            run_server(listener, app_handle_clone).await;
+            run_server(listener, app_handle_clone, shutdown).await;
         });
         {
             let mut handle = SERVER_HANDLE.lock().unwrap();
@@ -382,6 +402,12 @@ pub async fn toggle_file_server(
         let mut handle = SERVER_HANDLE.lock().unwrap();
         if let Some(h) = handle.take() {
             h.abort();
+            if let Some(shutdown) = SERVER_SHUTDOWN.lock().unwrap().take() {
+                shutdown.cancel();
+            }
+            if let Ok(mut ws) = app_handle.state::<WsBroadcaster>().0.lock() {
+                *ws = None;
+            }
             let db_state = app_handle.state::<DbState>();
             let _ = db_state.settings_repo.set("file_server_enabled", "false");
             let server_info = app_handle.state::<ServerInfo>();
@@ -422,7 +448,11 @@ const MAX_CHUNK_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// sessions and exhaust memory/disk (P1). New sessions beyond this are rejected.
 pub const MAX_UPLOAD_SESSIONS: usize = 64;
 
-pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle) {
+pub async fn run_server(
+    listener: tokio::net::TcpListener,
+    app_handle: AppHandle,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
     let (ws_tx, _) = broadcast::channel::<String>(100);
     {
         let ws_state = app_handle.state::<WsBroadcaster>();
@@ -433,6 +463,7 @@ pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle
     let state = Arc::new(AppState {
         app_handle: app_handle.clone(),
         ws_tx: ws_tx.clone(),
+        shutdown: shutdown.clone(),
     });
     let app = Router::new()
         .route("/", get(handlers::index))
@@ -456,6 +487,10 @@ pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(file_server_access_key(&app_handle)),
             require_access_key,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            shutdown,
+            reject_after_shutdown,
         ))
         .layer(DefaultBodyLimit::max(MAX_CHUNK_BODY_BYTES));
 
@@ -493,7 +528,9 @@ pub fn append_message(
         Ok(guard) => guard,
         Err(_) => return,
     };
-    let id = msgs.len() as u64 + 1;
+    // Monotonic (not len-based) so ids stay unique once old messages are trimmed below;
+    // clients poll with `last_id`.
+    let id = msgs.last().map_or(1, |m| m.id + 1);
     let mut final_content = content.to_string();
     if (msg_type == "image" || msg_type == "video" || msg_type == "file")
         && !final_content.starts_with("data:")
@@ -532,6 +569,24 @@ pub fn append_message(
         file_path: file_path.map(|s| s.to_string()),
     };
     msgs.push(msg.clone());
+    // Bound the in-memory chat (a LAN peer can post up to 16 MiB per message) and drop the
+    // download tokens of trimmed messages with it.
+    const MAX_CHAT_MESSAGES: usize = 500;
+    if msgs.len() > MAX_CHAT_MESSAGES {
+        let excess = msgs.len() - MAX_CHAT_MESSAGES;
+        let trimmed: Vec<Message> = msgs.drain(..excess).collect();
+        if let Ok(mut map) = app.state::<SharedFileState>().0.lock() {
+            for old in &trimmed {
+                if let Some(token) = old
+                    .content
+                    .strip_prefix("/download/")
+                    .and_then(|rest| rest.split('?').next())
+                {
+                    map.remove(token);
+                }
+            }
+        }
+    }
     drop(msgs);
     if let Some(ws_state) = app.try_state::<WsBroadcaster>() {
         if let Ok(guard) = ws_state.0.lock() {

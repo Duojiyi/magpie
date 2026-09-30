@@ -42,20 +42,20 @@ const DataSettingsGroup = ({ t, collapsed, onToggle, dataPath }: DataSettingsGro
 
                                             if (confirm) {
                                                 try {
-                                                    // Logic Update:
-                                                    // We DO NOT copy the file here because the DB is locked/in-use.
-                                                    // Instead, we just set the path and restart.
-                                                    // The backend 'main.rs' startup logic will handle the migration (copying)
-                                                    // if it detects a custom path with no DB using the default DB as source.
-
+                                                    // set_data_path copies the data and points datapath.txt at the
+                                                    // new folder; on success it also pauses capture until restart.
                                                     await invoke("set_data_path", { newPath });
 
-                                                    await message(
-                                                        t('data_move_success'),
-                                                        { title: t('notice'), kind: 'info' }
-                                                    );
-
-                                                    await invoke("relaunch");
+                                                    // Committed: relaunch no matter how the notice resolves, or
+                                                    // capture would stay paused with a misleading "failed" dialog.
+                                                    try {
+                                                        await message(
+                                                            t('data_move_success'),
+                                                            { title: t('notice'), kind: 'info' }
+                                                        );
+                                                    } finally {
+                                                        await invoke("relaunch");
+                                                    }
                                                 } catch (e: unknown) {
                                                     console.error(e);
                                                     const errorMsg = e instanceof Error ? e.message : String(e);

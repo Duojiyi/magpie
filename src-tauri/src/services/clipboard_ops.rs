@@ -1519,6 +1519,19 @@ pub fn send_paste_keystroke(method: &str, content: Option<&str>, content_type: O
     }
 }
 
+/// Pinned or tagged items survive "delete after paste". The session copy is checked too:
+/// session-only items (id < 0) can carry tags, and they have no database row to look at.
+pub(crate) fn is_kept_after_paste(app_handle: &tauri::AppHandle, db: &DbState, id: i64) -> bool {
+    let session = app_handle.state::<SessionHistory>();
+    if let Some(item) = session.inner().0.lock().unwrap().iter().find(|i| i.id == id) {
+        if item.is_pinned || !item.tags.is_empty() {
+            return true;
+        }
+    }
+    id > 0
+        && matches!(db.repo.get_entry_by_id(id), Ok(Some(e)) if e.is_pinned || !e.tags.is_empty())
+}
+
 fn handle_post_paste_actions(
     app_handle: &tauri::AppHandle,
     state: &State<'_, DbState>,
@@ -1526,22 +1539,19 @@ fn handle_post_paste_actions(
     delete_after_use: bool,
     move_to_top: Option<bool>,
 ) -> AppResult<()> {
-    let mut actual_delete = delete_after_use;
-    if actual_delete && id > 0 {
-        if let Ok(Some(entry)) = state.repo.get_entry_by_id(id) {
-            if entry.is_pinned || !entry.tags.is_empty() {
-                actual_delete = false;
-            }
-        }
-    }
+    let actual_delete = delete_after_use && !is_kept_after_paste(app_handle, state, id);
 
     if actual_delete {
-        // Handle session items cleanup
-        if id < 0 {
-            let session = app_handle.state::<SessionHistory>();
-            let mut session_items = session.inner().0.lock().unwrap();
-            session_items.retain(|item| item.id != id);
-        }
+        // Drop the session copy for every id: a promoted row (id > 0) keeps one while
+        // persistence is off, and history merges session items missing from the database,
+        // so leaving it would bring the deleted item back on the next refetch.
+        app_handle
+            .state::<SessionHistory>()
+            .inner()
+            .0
+            .lock()
+            .unwrap()
+            .retain(|item| item.id != id);
 
         // Cleanup file if needed
         let app_data = app_handle.state::<crate::app_state::AppDataDir>();

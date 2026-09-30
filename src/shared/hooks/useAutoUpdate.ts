@@ -151,6 +151,7 @@ export const useAutoUpdate = () => {
       } catch {
         // 读不到设置时按历史行为继续检查
       }
+      if (cancelled) return;
 
       timer = setTimeout(() => {
         checkUpdate();
@@ -169,13 +170,14 @@ export const useAutoUpdate = () => {
       return () => {};
     };
 
-    let unlisten: (() => void) | undefined;
-    setupListener().then(fn => { unlisten = fn; });
+    // Cleanup can run before the listener is registered (StrictMode / fast unmount);
+    // unlisten through the promise so a late registration is still removed.
+    const unlistenPromise = setupListener();
     
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      if (unlisten) unlisten();
+      unlistenPromise.then(fn => fn()).catch(() => {});
     };
   }, [checkUpdate]);
 

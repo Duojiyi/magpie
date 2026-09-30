@@ -232,7 +232,7 @@ pub async fn call_ai(
 
     let content = sanitize_input(&content)?;
 
-    let (api_key, base_url, model, target_lang, persistent, enable_thinking, thinking_budget) = {
+    let (api_key, base_url, model, target_lang, enable_thinking, thinking_budget) = {
         // 1. Get functional assignment
         let assigned_profile_key = format!("ai_assigned_profile_{}", action_type);
         let assigned_id = state
@@ -308,12 +308,6 @@ pub async fn call_ai(
             .get("ai_target_lang")
             .unwrap_or(None)
             .unwrap_or_else(|| "zh".to_string());
-        let persistent = state
-            .settings_repo
-            .get("app.persistent")
-            .unwrap_or(None)
-            .unwrap_or_else(|| "true".to_string())
-            == "true";
         let thinking_budget = state
             .settings_repo
             .get("ai_thinking_budget")
@@ -323,7 +317,7 @@ pub async fn call_ai(
             .map(|v| std::cmp::max(v, 1024)) // API requires minimum 1024
             .unwrap_or(1024);
 
-        (key, url, mdl, lang, persistent, thinking, thinking_budget)
+        (key, url, mdl, lang, thinking, thinking_budget)
     };
 
     if api_key.is_empty() {
@@ -484,8 +478,14 @@ pub async fn call_ai(
             ai_response.replace('\n', " ")
         };
 
-        // Update database only if persistence is enabled
-        if persistent {
+        // Whether the row lives in the database is decided by its id, not by the current
+        // persistence setting: session items survive switching persistence on (id < 0, no
+        // row: the update failed and the result was thrown away), and pinned/tagged items are
+        // promoted to the database while persistence is off (id > 0: only the session copy
+        // changed, so paste and refetch showed the old text).
+        // A clarifying-question reply is not a result and must not replace the item's text.
+        let is_question = ai_response.contains("[[QUESTION:");
+        if id > 0 && !is_question {
             state
                 .repo
                 .update_entry_content(id, &ai_response, &preview)
@@ -494,20 +494,29 @@ pub async fn call_ai(
 
         // Sync Session History and Emit Update
         use crate::app_state::SessionHistory;
-        if let Some(session) = app_handle.try_state::<SessionHistory>() {
-            let mut history = session.0.lock().unwrap();
-            if let Some(item) = history.iter_mut().find(|i| i.id == id) {
-                item.content = ai_response.clone();
-                item.preview = preview.clone();
-                // Clear rich text so AI result is shown
-                if item.content_type == "rich_text" {
-                    item.content_type = "text".to_string();
-                    item.html_content = None;
-                }
-                // Emit update event from session item
-                let _ = app_handle.emit("clipboard-updated", item.clone());
-            } else if persistent {
-                // If persistent and not in session, fetch from DB to emit
+        if let Some(session) = app_handle.try_state::<SessionHistory>().filter(|_| !is_question) {
+            // Release the session lock before touching the database: the rest of the app
+            // locks conn -> session, so reading the row while holding session is AB-BA.
+            let session_copy = session
+                .0
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|i| i.id == id)
+                .map(|item| {
+                    item.content = ai_response.clone();
+                    item.preview = preview.clone();
+                    // Clear rich text so AI result is shown
+                    if item.content_type == "rich_text" {
+                        item.content_type = "text".to_string();
+                        item.html_content = None;
+                    }
+                    item.clone()
+                });
+            if let Some(item) = session_copy {
+                let _ = app_handle.emit("clipboard-updated", item);
+            } else if id > 0 {
+                // A database row not in the session: emit it from the database
                 if let Ok(Some(updated_entry)) = state.repo.get_entry_by_id(id) {
                     let _ = app_handle.emit("clipboard-updated", updated_entry);
                 }

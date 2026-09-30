@@ -97,10 +97,12 @@ fn normalize_remote_img_url(src: &str) -> Option<String> {
 /// puts on the clipboard, so without it a web page could have Magpie probe the local
 /// network (router admin pages, localhost services) on its behalf.
 fn is_private_image_host(url: &str) -> bool {
-    let Some(host) = reqwest::Url::parse(url)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(|h| h.to_ascii_lowercase()))
-    else {
+    // Trailing root dot removed: `localhost.` / `router.` resolve like the dotless names.
+    let Some(host) = reqwest::Url::parse(url).ok().and_then(|parsed| {
+        parsed
+            .host_str()
+            .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+    }) else {
         return true;
     };
     // IPv6 literals come back bracketed from host_str().
@@ -108,7 +110,20 @@ fn is_private_image_host(url: &str) -> bool {
         Ok(std::net::IpAddr::V4(ip)) => is_private_ipv4(ip),
         Ok(std::net::IpAddr::V6(ip)) => {
             let first = ip.segments()[0];
-            ip.to_ipv4_mapped().is_some_and(is_private_ipv4)
+            // IPv4-mapped, deprecated IPv4-compatible (::a.b.c.d) and NAT64 (64:ff9b::/96)
+            // forms all reach an IPv4 host.
+            let embedded_v4 = ip.to_ipv4_mapped().or_else(|| ip.to_ipv4()).or_else(|| {
+                let s = ip.segments();
+                (s[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(|| {
+                    std::net::Ipv4Addr::new(
+                        (s[6] >> 8) as u8,
+                        s[6] as u8,
+                        (s[7] >> 8) as u8,
+                        s[7] as u8,
+                    )
+                })
+            });
+            embedded_v4.is_some_and(is_private_ipv4)
                 || ip.is_loopback()
                 || ip.is_unspecified()
                 || (first & 0xfe00) == 0xfc00 // unique local
@@ -133,7 +148,7 @@ fn is_private_ipv4(ip: std::net::Ipv4Addr) -> bool {
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
-        || ip.is_unspecified()
+        || a == 0 // 0.0.0.0/8 ("this network"; reaches the local host on Linux)
         || ip.is_broadcast()
         || (a == 100 && (64..=127).contains(&b)) // carrier-grade NAT, 100.64.0.0/10
 }
@@ -172,7 +187,7 @@ fn fetch_remote_image(url: &str) -> Option<(Vec<u8>, &'static str)> {
             // Every hop is checked, not only the first URL: a public page redirecting to a
             // LAN address would otherwise get past is_private_image_host.
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 8 {
+                if attempt.previous().len() > 8 {
                     attempt.error("too many redirects")
                 } else if is_private_image_host(attempt.url().as_str()) {
                     attempt.stop()
@@ -1467,6 +1482,10 @@ mod tests {
             "http://localhost:8080/x.png",
             "http://printer.local/x.png",
             "http://router/x.png",
+            "http://localhost./x.png",
+            "http://nas.lan./x.png",
+            "http://0.1.2.3/x.png",
+            "http://[64:ff9b::c0a8:101]/x.png",
             "http://[::ffff:127.0.0.1]/x.png",
             "http://100.64.1.1/x.png",
             "not a url",

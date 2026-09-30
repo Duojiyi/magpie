@@ -238,7 +238,13 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                 }}
             >
                 <option value="Global">{props.t('hotkey_scope_global')}</option>
-                <option value="InAppOnly">{props.t('hotkey_scope_in_app_only')}</option>
+                {/* Only rich paste has an in-app keydown handler; for main / sequential /
+                    search InAppOnly skips global registration and leaves the key dead (for
+                    main that means the panel can no longer be summoned). A stored legacy
+                    value stays listed so it can be seen and changed. */}
+                {(id === 'rich' || current === 'InAppOnly') && (
+                    <option value="InAppOnly">{props.t('hotkey_scope_in_app_only')}</option>
+                )}
                 <option value="BackgroundOnly">{props.t('hotkey_scope_background_only')}</option>
             </select>
         );

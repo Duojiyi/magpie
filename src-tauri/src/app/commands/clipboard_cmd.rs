@@ -130,8 +130,13 @@ pub fn update_tags(
     let new_sensitive = has_sensitive_tag(&tags);
     state
         .tag_repo
-        .update_entry_tags(id, tags)
+        .update_entry_tags(id, tags.clone())
         .map_err(AppError::from)?;
+    // A promoted row keeps its session copy (persistence off): keep its tags in step so the
+    // session list and delete-after-paste guards see the same tags as the database.
+    if let Some(item) = session.inner().0.lock().unwrap().iter_mut().find(|i| i.id == id) {
+        item.tags = tags;
+    }
     if old_sensitive != new_sensitive {
         let queue = app_handle.state::<EncryptionQueueState>();
         let action = if new_sensitive {

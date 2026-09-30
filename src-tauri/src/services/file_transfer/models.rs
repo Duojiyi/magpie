@@ -8,6 +8,9 @@ use tokio::sync::broadcast;
 pub struct AppState {
     pub app_handle: AppHandle,
     pub ws_tx: broadcast::Sender<String>,
+    /// Cancelled when the server is switched off; open sockets and keep-alive connections
+    /// outlive the aborted accept loop and watch this to stop.
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Default)]

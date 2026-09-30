@@ -109,30 +109,43 @@ fn read_clipboard_image_once(
 fn is_likely_rich_text_source(
     source_snapshot: &crate::infrastructure::windows_api::window_tracker::ActiveAppInfo,
 ) -> bool {
-    let mut haystack = source_snapshot.app_name.to_ascii_lowercase();
-    if let Some(path) = source_snapshot.process_path.as_deref() {
-        if !haystack.is_empty() {
-            haystack.push(' ');
-        }
-        haystack.push_str(&path.to_ascii_lowercase());
+    // Whole words / whole file names only: a substring test matched "1Password" ("word"),
+    // "Calculator" ("calc") or any path under a folder with such a name.
+    const APP_WORDS: [&str; 11] = [
+        "wps", "word", "excel", "powerpoint", "onenote", "outlook", "libreoffice",
+        "openoffice", "writer", "calc", "impress",
+    ];
+    let app_name = source_snapshot.app_name.to_ascii_lowercase();
+    if app_name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| APP_WORDS.contains(&word))
+    {
+        return true;
     }
 
-    [
-        "wps",
-        "winword",
-        "word",
-        "excel",
-        "powerpoint",
-        "onenote",
-        "outlook",
-        "soffice",
-        "libreoffice",
-        "writer",
-        "calc",
-        "impress",
-    ]
-    .iter()
-    .any(|needle| haystack.contains(needle))
+    let exe = source_snapshot
+        .process_path
+        .as_deref()
+        .and_then(|path| path.rsplit(['\\', '/']).next())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        exe.as_str(),
+        "wps.exe"
+            | "et.exe"
+            | "wpp.exe"
+            | "winword.exe"
+            | "excel.exe"
+            | "powerpnt.exe"
+            | "onenote.exe"
+            | "outlook.exe"
+            | "olk.exe"
+            | "soffice.exe"
+            | "soffice.bin"
+            | "swriter.exe"
+            | "scalc.exe"
+            | "simpress.exe"
+    )
 }
 
 fn is_likely_spreadsheet_source(
@@ -1127,8 +1140,8 @@ pub fn process_new_entry(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_likely_spreadsheet_source, is_snipping_tool_source, should_capture_file_entries,
-        should_preserve_named_clipboard_format,
+        is_likely_rich_text_source, is_likely_spreadsheet_source, is_snipping_tool_source,
+        should_capture_file_entries, should_preserve_named_clipboard_format,
     };
     use crate::infrastructure::windows_api::window_tracker::ActiveAppInfo;
 
@@ -1174,6 +1187,26 @@ mod tests {
         assert!(!is_likely_spreadsheet_source(&source(
             "Widget",
             r"C:\Apps\widget.exe"
+        )));
+    }
+
+    #[test]
+    fn rich_text_source_matches_words_not_substrings() {
+        assert!(is_likely_rich_text_source(&source(
+            "Microsoft Word",
+            r"C:\Office16\WINWORD.EXE"
+        )));
+        assert!(is_likely_rich_text_source(&source(
+            "",
+            r"C:\Program Files\WPS Office\office6\wps.exe"
+        )));
+        assert!(!is_likely_rich_text_source(&source(
+            "1Password",
+            r"C:\Users\word\AppData\Local\1Password\1Password.exe"
+        )));
+        assert!(!is_likely_rich_text_source(&source(
+            "Calculator",
+            r"C:\Windows\System32\calc.exe"
         )));
     }
 

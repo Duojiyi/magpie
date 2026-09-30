@@ -544,11 +544,11 @@ pub fn quit(app: AppHandle) {
 
 #[tauri::command]
 pub fn relaunch(app: AppHandle) {
-    use std::process::Command;
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = Command::new(exe).spawn();
-    }
-    app.exit(0);
+    // Spawning the exe and then exiting raced the single-instance lock: the child could
+    // start while this instance still held it, forward its args here and quit, and then
+    // this instance quit too, leaving nothing running. request_restart runs the exit
+    // handlers (releasing the lock) before it spawns the new process.
+    app.request_restart();
 }
 
 #[cfg(target_os = "windows")]
@@ -654,6 +654,14 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
     let new_data_path = std::path::Path::new(&clean_path);
     if !new_data_path.exists() {
         return Err(AppError::Validation("Directory does not exist".to_string()));
+    }
+    // The portable build always uses the `data` folder next to the exe (datapath.txt is
+    // ignored there), so a move would copy everything and then never be used.
+    if crate::global_state::PORTABLE_MODE_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(AppError::Validation(
+            "便携版的数据固定保存在程序目录下的 data 文件夹，无法更改 / The portable build always keeps its data in the data folder next to the program"
+                .to_string(),
+        ));
     }
 
     let old_path_buf = app_handle.state::<AppDataDir>().0.lock().unwrap().clone();
@@ -859,19 +867,28 @@ pub fn cleanup_previous_data_dir(config_dir: &std::path::Path, current_data_dir:
         return;
     };
     let previous = std::path::PathBuf::from(previous.trim());
+    // Only NotFound counts as done; a file still locked by the exiting process keeps the
+    // marker so the next start tries again.
+    let removed = |path: std::path::PathBuf| match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    };
+    let mut all_removed = true;
     if !previous.as_os_str().is_empty() && previous != current_data_dir {
         for name in ["clipboard.db", "clipboard.db-wal", "clipboard.db-shm"] {
-            let _ = std::fs::remove_file(previous.join(name));
+            all_removed &= removed(previous.join(name));
         }
         let old_key = previous.join("local.key");
         let same_key = std::fs::read(&old_key).ok().is_some_and(|old| {
             std::fs::read(current_data_dir.join("local.key")).ok().as_deref() == Some(old.as_slice())
         });
         if same_key {
-            let _ = std::fs::remove_file(old_key);
+            all_removed &= removed(old_key);
         }
     }
-    let _ = std::fs::remove_file(marker);
+    if all_removed {
+        let _ = std::fs::remove_file(marker);
+    }
 }
 
 /// What `set_data_path` changed so far, so a failure can put everything back.

@@ -616,7 +616,7 @@ const FileTransferChatView = ({
                                             alt="Image"
                                             onClick={async () => {
                                                 await invoke('open_content', {
-                                                    id: m.id,
+                                                    id: 0, // chat message id, not a clipboard history id
                                                     content: m.file_path || m.content,
                                                     contentType: 'image'
                                                 });
@@ -697,7 +697,7 @@ const FileTransferChatView = ({
                                                     try {
                                                         const targetPath = m.file_path || m.content;
                                                         await invoke('open_content', {
-                                                            id: m.id,
+                                                            id: 0, // chat message id, not a clipboard history id
                                                             content: targetPath,
                                                             contentType: 'file'
                                                         });
@@ -899,8 +899,9 @@ const FileTransferChatView = ({
                                 <div
                                     className="context-item"
                                     onClick={async () => {
+                                        // Chat message ids are not clipboard history ids: open by path.
                                         await invoke('open_content', {
-                                            id: contextMenu.id || 0,
+                                            id: 0,
                                             content: contextMenu.filePath,
                                             contentType: contextMenu.type || 'file'
                                         });

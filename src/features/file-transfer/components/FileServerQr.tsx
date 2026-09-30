@@ -11,7 +11,6 @@ const FileServerQr = ({ ip, port, size }: { ip: string; port: string | number; s
   return (
     <button
       type="button"
-      title={url}
       aria-label="Copy connection link / 复制连接链接"
       onClick={() => navigator.clipboard?.writeText(url).catch(console.error)}
       style={{ padding: 0, border: "none", background: "none", cursor: "copy", lineHeight: 0 }}

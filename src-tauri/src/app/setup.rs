@@ -65,9 +65,6 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Data Directory & Migration
     let app_dir = resolve_data_dir(app)?;
-    if let Ok(config_dir) = app.path().app_data_dir() {
-        crate::app::commands::system_cmd::cleanup_previous_data_dir(&config_dir, &app_dir);
-    }
 
     // 2. Logger Initialization
     crate::logger::init(app_dir.join("tiez.log"));
@@ -88,6 +85,11 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Magpie startup error: {}", err_msg);
         e
     })?;
+    // Only now that the moved database opened fine: drop the stale copy a previous
+    // set_data_path left behind in the old folder.
+    if let Ok(config_dir) = app.path().app_data_dir() {
+        crate::app::commands::system_cmd::cleanup_previous_data_dir(&config_dir, &app_dir);
+    }
     let conn_arc = std::sync::Arc::new(std::sync::Mutex::new(conn));
     let settings_repo = SqliteSettingsRepository::new(conn_arc.clone());
 

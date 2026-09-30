@@ -115,17 +115,28 @@ enum WsIncoming {
 pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
     let mut rx = state.ws_tx.subscribe();
-    let mut current_device_id: Option<String> = None;
+    // Every identity this socket announced. Cleaned up after the select below: doing it at
+    // the end of recv_task skipped it whenever send_task finished first (recv_task is then
+    // aborted), leaving the device listed as online.
+    let announced: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
 
     let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if sender.send(WsMessage::Text(msg.into())).await.is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(msg) => {
+                    if sender.send(WsMessage::Text(msg.into())).await.is_err() {
+                        break;
+                    }
+                }
+                // A slow client missed some messages; keep the socket instead of dropping it.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
 
     let state_inner = state.clone();
+    let announced_inner = announced.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let WsMessage::Text(text) = msg {
@@ -146,7 +157,11 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                                         last_seen: chrono::Utc::now().timestamp_millis(),
                                     },
                                 );
-                                current_device_id = Some(device_id);
+                                let mut ids = announced_inner.lock().unwrap();
+                                if !ids.contains(&device_id) {
+                                    ids.push(device_id);
+                                }
+                                drop(ids);
 
                                 let devices: Vec<DeviceInfo> = guard.values().cloned().collect();
                                 let update = serde_json::json!({
@@ -163,28 +178,34 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 }
             }
         }
-
-        if let Some(id) = current_device_id {
-            let online_devices = state_inner.app_handle.state::<OnlineDevices>();
-            {
-                let mut guard = online_devices.0.lock().unwrap();
-                guard.remove(&id);
-                let devices: Vec<DeviceInfo> = guard.values().cloned().collect();
-                let update = serde_json::json!({
-                    "type": "devices_update",
-                    "devices": devices
-                });
-                let _ = state_inner.ws_tx.send(update.to_string());
-                let _ = state_inner
-                    .app_handle
-                    .emit("online-devices-updated", devices);
-            }
-        }
     });
 
     tokio::select! {
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
+        // Server switched off: close this socket too (an upgraded WebSocket outlives the
+        // aborted accept loop).
+        _ = state.shutdown.cancelled() => {
+            send_task.abort();
+            recv_task.abort();
+        }
+    }
+
+    let ids = std::mem::take(&mut *announced.lock().unwrap());
+    if !ids.is_empty() {
+        let online_devices = state.app_handle.state::<OnlineDevices>();
+        let mut guard = online_devices.0.lock().unwrap();
+        for id in &ids {
+            guard.remove(id);
+        }
+        let devices: Vec<DeviceInfo> = guard.values().cloned().collect();
+        drop(guard);
+        let update = serde_json::json!({
+            "type": "devices_update",
+            "devices": devices
+        });
+        let _ = state.ws_tx.send(update.to_string());
+        let _ = state.app_handle.emit("online-devices-updated", devices);
     }
 }
 
@@ -225,10 +246,8 @@ pub async fn handle_text(
         preview.push_str("...");
     }
 
-    let mut id_result = Ok(0);
-
-    if settings.auto_copy_file.load(Ordering::Relaxed) {
-        id_result = if settings.persistent.load(Ordering::Relaxed) {
+    let id_result = if settings.auto_copy_file.load(Ordering::Relaxed) {
+        if settings.persistent.load(Ordering::Relaxed) {
             let entry = ClipboardEntry {
                 id: 0,
                 content_type: "text".to_string(),
@@ -282,15 +301,16 @@ pub async fn handle_text(
 
             if let Ok(mut session) = session_hist.0.lock() {
                 session.push_back(entry);
-                if session.len() > 500 {
-                    if let Some(removed) = session.pop_front() {
-                        let _ = state.app_handle.emit("clipboard-removed", removed.id);
-                    }
+                for removed in crate::app_state::trim_session_history(&mut session) {
+                    let _ = state.app_handle.emit("clipboard-removed", removed);
                 }
             }
             Ok(id)
-        };
-    }
+        }
+    } else {
+        // Auto-copy off: the message was delivered to the chat above; nothing else to save.
+        return (StatusCode::OK, "Text received").into_response();
+    };
 
     if let Ok(id) = id_result {
         if id != 0 {
@@ -299,6 +319,38 @@ pub async fn handle_text(
         }
     }
     (StatusCode::INTERNAL_SERVER_ERROR, "Failed to save text").into_response()
+}
+
+/// Creates `<dir>/<timestamp>_<name>` (or `<timestamp>_<n>_<name>` if taken) exclusively.
+/// A per-second name alone let same-named uploads finishing in the same second (iOS names
+/// every picked photo `image.jpg`) overwrite each other.
+async fn create_unique_upload_file(
+    dir: &std::path::Path,
+    file_name: &str,
+) -> std::io::Result<(std::path::PathBuf, File)> {
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    let name = sanitize_upload_filename(file_name);
+    for n in 0..1000u32 {
+        let candidate = if n == 0 {
+            dir.join(format!("{}_{}", stamp, name))
+        } else {
+            dir.join(format!("{}_{}_{}", stamp, n, name))
+        };
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no free upload file name",
+    ))
 }
 
 pub async fn upload(
@@ -349,13 +401,9 @@ pub async fn upload(
                 let _ = std::fs::create_dir_all(&save_dir);
             }
 
-            let target_path = save_dir.join(format!(
-                "{}_{}",
-                chrono::Utc::now().format("%Y%m%d%H%M%S"),
-                sanitize_upload_filename(&file_name)
-            ));
-
-            if let Ok(mut file) = File::create(&target_path).await {
+            if let Ok((target_path, mut file)) =
+                create_unique_upload_file(&save_dir, &file_name).await
+            {
                 let mut stream = field;
                 let mut write_success = true;
                 // `while let Some(Ok(..))` treated a stream error (client disconnect, body
@@ -526,6 +574,43 @@ pub async fn upload_chunk(
     // handle contention) and closes the window where a concurrent rebuild of the same
     // deterministic path could race a delete — so we never append onto stale bytes and
     // finalize a silently-corrupt file.
+    // Chunks are appended blindly, so check each lands where it belongs (uniform chunk size,
+    // the last one ends at total_size). A skipped or repeated chunk would otherwise finalize
+    // a corrupt file and register it as received.
+    let is_last = meta.chunk_index == meta.total_chunks - 1;
+    let len = data.len() as u64;
+    let expected_offset = if is_last {
+        meta.total_size.checked_sub(len)
+    } else {
+        (meta.chunk_index as u64).checked_mul(len)
+    };
+    let Some(expected_offset) = expected_offset else {
+        return (StatusCode::BAD_REQUEST, "Chunk size mismatch").into_response();
+    };
+    if meta.chunk_index == 0 {
+        if expected_offset != 0 {
+            return (StatusCode::BAD_REQUEST, "Chunk size mismatch").into_response();
+        }
+    } else {
+        let current = tokio::fs::metadata(&temp_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if current == expected_offset + len && !is_last {
+            // A retry of a chunk that already landed.
+            return (StatusCode::OK, "Chunk received").into_response();
+        }
+        if current != expected_offset {
+            sessions.0.lock().unwrap().remove(&meta.upload_id);
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return (
+                StatusCode::CONFLICT,
+                "Chunk out of order; restart the upload with a new upload_id",
+            )
+                .into_response();
+        }
+    }
+
     let mut options = tokio::fs::OpenOptions::new();
     if meta.chunk_index == 0 {
         options.create(true).write(true).truncate(true);
@@ -543,28 +628,41 @@ pub async fn upload_chunk(
     }
 
     if meta.chunk_index == meta.total_chunks - 1 {
-        let final_filename = format!(
-            "{}_{}",
-            chrono::Utc::now().format("%Y%m%d%H%M%S"),
-            sanitize_upload_filename(&meta.file_name)
-        );
-        let final_path = match temp_path.parent() {
-            Some(parent) => parent.join(&final_filename),
+        // Reserve a name no other upload holds, then move the temp file over the (empty)
+        // reservation. The handle is closed first: Windows cannot replace an open file.
+        let reserved = match temp_path.parent() {
+            Some(parent) => create_unique_upload_file(parent, &meta.file_name).await,
             None => {
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Invalid temp path").into_response()
             }
         };
-
-        if let Err(e) = tokio::fs::rename(&temp_path, &final_path).await {
-            eprintln!("Error finalizing file: {}", e);
-            // Drop the session + temp file so a failed finalize doesn't leak a slot/file.
-            {
-                let mut sessions_map = sessions.0.lock().unwrap();
-                sessions_map.remove(&meta.upload_id);
+        let rename_result = match reserved {
+            Ok((final_path, reservation)) => {
+                drop(reservation);
+                match tokio::fs::rename(&temp_path, &final_path).await {
+                    Ok(()) => Ok(final_path),
+                    Err(e) => {
+                        let _ = tokio::fs::remove_file(&final_path).await;
+                        Err(e)
+                    }
+                }
             }
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Finalize failed").into_response();
-        }
+            Err(e) => Err(e),
+        };
+
+        let final_path = match rename_result {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("Error finalizing file: {}", e);
+                // Drop the session + temp file so a failed finalize doesn't leak a slot/file.
+                {
+                    let mut sessions_map = sessions.0.lock().unwrap();
+                    sessions_map.remove(&meta.upload_id);
+                }
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Finalize failed").into_response();
+            }
+        };
 
         {
             let mut sessions_map = sessions.0.lock().unwrap();
@@ -588,6 +686,70 @@ pub async fn upload_chunk(
     }
 
     (StatusCode::OK, "Chunk received").into_response()
+}
+
+/// Parses a single `Range: bytes=...` header against a file of `total` bytes.
+/// `Ok(Some((start, end)))` is an inclusive satisfiable range, `Ok(None)` means ignore the
+/// header and serve the whole file (malformed, multi-range, `end < start`), and `Err(())`
+/// means 416 (start past the end, empty suffix, empty file).
+fn parse_byte_range(header: &str, total: u64) -> Result<Option<(u64, u64)>, ()> {
+    let Some(spec) = header.trim().strip_prefix("bytes=") else {
+        return Ok(None);
+    };
+    if spec.contains(',') {
+        return Ok(None);
+    }
+    let Some((first, last)) = spec.split_once('-') else {
+        return Ok(None);
+    };
+    let (first, last) = (first.trim(), last.trim());
+    if first.is_empty() {
+        // Suffix range `bytes=-N`: the last N bytes.
+        let Ok(suffix) = last.parse::<u64>() else {
+            return Ok(None);
+        };
+        if suffix == 0 || total == 0 {
+            return Err(());
+        }
+        return Ok(Some((total.saturating_sub(suffix), total - 1)));
+    }
+    let Ok(start) = first.parse::<u64>() else {
+        return Ok(None);
+    };
+    let end = if last.is_empty() {
+        u64::MAX
+    } else {
+        match last.parse::<u64>() {
+            Ok(end) => end,
+            Err(_) => return Ok(None),
+        }
+    };
+    if start >= total {
+        return Err(());
+    }
+    if end < start {
+        return Ok(None);
+    }
+    Ok(Some((start, end.min(total - 1))))
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::parse_byte_range;
+
+    #[test]
+    fn byte_ranges() {
+        assert_eq!(parse_byte_range("bytes=0-9", 100), Ok(Some((0, 9))));
+        assert_eq!(parse_byte_range("bytes=90-", 100), Ok(Some((90, 99))));
+        assert_eq!(parse_byte_range("bytes=90-500", 100), Ok(Some((90, 99))));
+        assert_eq!(parse_byte_range("bytes=-10", 100), Ok(Some((90, 99))));
+        assert_eq!(parse_byte_range("bytes=-500", 100), Ok(Some((0, 99))));
+        assert_eq!(parse_byte_range("bytes=100-", 100), Err(()));
+        assert_eq!(parse_byte_range("bytes=-0", 100), Err(()));
+        assert_eq!(parse_byte_range("bytes=5-2", 100), Ok(None));
+        assert_eq!(parse_byte_range("bytes=0-1,5-6", 100), Ok(None));
+        assert_eq!(parse_byte_range("items=0-1", 100), Ok(None));
+    }
 }
 
 pub async fn handle_file_download_proxy(
@@ -654,49 +816,39 @@ pub async fn handle_file_download_proxy(
                 let range_header = headers.get(header::RANGE).and_then(|h| h.to_str().ok());
 
                 if let Some(range) = range_header {
-                    if let Some(r) = range.strip_prefix("bytes=") {
-                        let parts: Vec<&str> = r.split('-').collect();
-                        if parts.len() == 2 {
-                            let start = parts[0].parse::<u64>().unwrap_or(0);
-                            let end = parts[1]
-                                .parse::<u64>()
-                                .unwrap_or_else(|_| total_size.saturating_sub(1));
+                    let parsed = parse_byte_range(range, total_size);
+                    if parsed.is_err() {
+                        return (
+                            StatusCode::RANGE_NOT_SATISFIABLE,
+                            [(header::CONTENT_RANGE, format!("bytes */{}", total_size))],
+                        )
+                            .into_response();
+                    }
+                    if let Ok(Some((start, end))) = parsed {
+                        let content_length = end - start + 1;
 
-                            // `end < start` (e.g. `bytes=5-2`) made `end - start + 1` wrap; such
-                            // a range is ignored and the full file is served instead.
-                            if start < total_size && start <= end {
-                                let end = if end >= total_size {
-                                    total_size - 1
-                                } else {
-                                    end
-                                };
-                                let content_length = end - start + 1;
+                        if file.seek(SeekFrom::Start(start)).await.is_ok() {
+                            let stream =
+                                ReaderStream::with_capacity(file.take(content_length), 64 * 1024);
+                            let body = Body::from_stream(stream);
 
-                                if let Ok(_) = file.seek(SeekFrom::Start(start)).await {
-                                    let stream = ReaderStream::with_capacity(
-                                        file.take(content_length),
-                                        64 * 1024,
-                                    );
-                                    let body = Body::from_stream(stream);
-
-                                    return (
-                                        StatusCode::PARTIAL_CONTENT,
-                                        [
-                                            (header::CONTENT_TYPE, mime),
-                                            (header::CONTENT_DISPOSITION, disposition),
-                                            (header::ACCEPT_RANGES, "bytes".to_string()),
-                                            (
-                                                header::CONTENT_RANGE,
-                                                format!("bytes {}-{}/{}", start, end, total_size),
-                                            ),
-                                            (header::CONTENT_LENGTH, content_length.to_string()),
-                                        ],
-                                        body,
-                                    )
-                                        .into_response();
-                                }
-                            }
+                            return (
+                                StatusCode::PARTIAL_CONTENT,
+                                [
+                                    (header::CONTENT_TYPE, mime),
+                                    (header::CONTENT_DISPOSITION, disposition),
+                                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                                    (
+                                        header::CONTENT_RANGE,
+                                        format!("bytes {}-{}/{}", start, end, total_size),
+                                    ),
+                                    (header::CONTENT_LENGTH, content_length.to_string()),
+                                ],
+                                body,
+                            )
+                                .into_response();
                         }
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Seek failed").into_response();
                     }
                 }
 

@@ -142,10 +142,22 @@ pub async fn save_emoji_favorite(
         }
     };
 
+    // Same cap as the URL path: a huge file named *.png would otherwise be read whole.
+    let size = std::fs::metadata(source_path).map_err(AppError::from)?.len();
+    if size > MAX_EMOJI_BYTES as u64 {
+        return Err(emoji_too_large());
+    }
     let bytes = std::fs::read(source_path).map_err(AppError::from)?;
 
     let data_dir = app_data.0.lock().unwrap().clone();
     save_emoji_favorite_bytes_to_dir(&data_dir, &bytes, ext)
+}
+
+/// Size cap for a saved emoji favorite (file, data URL or download).
+const MAX_EMOJI_BYTES: usize = 20 * 1024 * 1024;
+
+fn emoji_too_large() -> AppError {
+    AppError::Validation("image is too large (max 20 MiB)".to_string())
 }
 
 #[tauri::command]
@@ -208,6 +220,9 @@ pub async fn save_emoji_favorite_data_url(
     if payload.is_empty() {
         return Err(AppError::Validation("data_url is empty".to_string()));
     }
+    if payload.len() / 4 * 3 > MAX_EMOJI_BYTES {
+        return Err(emoji_too_large());
+    }
 
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(payload)
@@ -219,6 +234,10 @@ pub async fn save_emoji_favorite_data_url(
         .or_else(|| image_ext_from_mime(mime.as_str()))
         .or_else(|| image_ext_from_bytes(&bytes))
         .unwrap_or("png");
+    // Only png/jpg/gif/webp are kept, all of which have a recognizable signature.
+    if image_ext_from_bytes(&bytes).is_none() {
+        return Err(AppError::Validation("unsupported image type".to_string()));
+    }
 
     let data_dir = app_data.0.lock().unwrap().clone();
     save_emoji_favorite_bytes_to_dir(&data_dir, &bytes, ext)
@@ -269,8 +288,8 @@ pub(crate) async fn save_emoji_favorite_url_to_dir(
 
     // Any dropped link lands here, not only images: read with a hard cap instead of buffering
     // a whole ISO/video into memory (an allocation failure aborts the app in release).
-    const MAX_EMOJI_DOWNLOAD_BYTES: usize = 20 * 1024 * 1024;
-    let too_large = || AppError::Validation("image is too large (max 20 MiB)".to_string());
+    const MAX_EMOJI_DOWNLOAD_BYTES: usize = MAX_EMOJI_BYTES;
+    let too_large = emoji_too_large;
     if response
         .content_length()
         .is_some_and(|len| len > MAX_EMOJI_DOWNLOAD_BYTES as u64)

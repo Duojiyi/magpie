@@ -19,6 +19,10 @@ interface TagInfo {
     count: number;
 }
 
+/** Full stored text of an item; the tag list only carries a copy truncated at 50k chars. */
+const fullContentOf = (item: ClipboardEntry): Promise<string> =>
+    invoke<string>('get_clipboard_content', { id: item.id });
+
 export default function TagManager({ t, theme }: TagManagerProps) {
     const TAG_MANAGER_VIEW_MODE_KEY = "tiez_tag_manager_view_mode";
     const TAG_MANAGER_SIDEBAR_WIDTH_KEY = "tiez_tag_manager_sidebar_width";
@@ -568,7 +572,10 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                                             onClick={async () => {
                                                 const selectedItems = tagItems.filter(item => selectedItemIds.has(item.id));
                                                 if (selectedItems.length > 0) {
-                                                    const combinedContent = selectedItems.map(item => item.content).join('\n');
+                                                    // Copying the truncated copy on a failed fetch loses nothing stored.
+                                                    const combinedContent = (await Promise.all(selectedItems.map(
+                                                        (item) => fullContentOf(item).catch(() => item.content)
+                                                    ))).join('\n');
                                                     await invoke('copy_to_clipboard', {
                                                         content: combinedContent,
                                                         contentType: 'text',
@@ -647,9 +654,16 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                                             ) : (
                                                 <>
                                                     {(item.content_type === 'text' || item.content_type === 'code') && (
-                                                        <button className="card-action-btn" title="编辑" onClick={(e) => {
+                                                        <button className="card-action-btn" title="编辑" onClick={async (e) => {
                                                             e.stopPropagation();
-                                                            setEditingItem({ id: item.id, content: item.content });
+                                                            // The list holds a preview truncated at 50k chars; editing
+                                                            // (and saving) that copy would cut the stored text for good.
+                                                            // No fallback to the truncated copy here: if the fetch fails, don't edit.
+                                                            try {
+                                                                setEditingItem({ id: item.id, content: await fullContentOf(item) });
+                                                            } catch (err) {
+                                                                console.error(err);
+                                                            }
                                                         }}>
                                                             <Edit2 size={10} />
                                                         </button>

@@ -135,12 +135,17 @@ impl SqliteClipboardRepository {
             )
             .map_err(|e| e.to_string())?;
 
+        // The row is sensitive: every field must end up sealed with the current scheme,
+        // including fields that were still plaintext.
         let reseal = |value: &str| -> Option<String> {
-            if !encryption::needs_portable_reseal(value) {
+            if encryption::needs_portable_reseal(value) {
+                let plain = encryption::decrypt_value(value)?;
+                return encryption::encrypt_value(&plain);
+            }
+            if encryption::is_encrypted_payload(value) {
                 return Some(value.to_string());
             }
-            let plain = encryption::decrypt_value(value)?;
-            encryption::encrypt_value(&plain)
+            encryption::encrypt_value(value)
         };
         let (Some(content), Some(preview)) = (reseal(&content_raw), reseal(&preview_raw)) else {
             return Ok(());

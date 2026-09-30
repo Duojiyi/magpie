@@ -36,6 +36,7 @@ export const useHistoryFetch = ({
 }: UseHistoryFetchOptions) => {
   const loadingRef = useRef(false);
   const fetchSeqRef = useRef(0);
+  const resetSeqRef = useRef<number | null>(null);
   const lastRequestedOffsetRef = useRef<number | null>(null);
   const currentOffsetRef = useRef(currentOffset);
   const historyLengthRef = useRef(historyLength);
@@ -49,7 +50,16 @@ export const useHistoryFetch = ({
   }, [historyLength]);
   const fetchHistory = useCallback(
     async (reset = false) => {
+      // A page load started while a reset is in flight would bump the sequence, so the
+      // reset's result got dropped while the stale page (old offset) was appended: new
+      // items stayed missing until the next reset. Skip such page loads; the reset's own
+      // result decides what comes next.
+      if (!reset && resetSeqRef.current !== null) {
+        lastRequestedOffsetRef.current = null;
+        return;
+      }
       const seq = ++fetchSeqRef.current;
+      if (reset) resetSeqRef.current = seq;
       try {
         if (reset) {
           lastRequestedOffsetRef.current = null;
@@ -129,6 +139,8 @@ export const useHistoryFetch = ({
       } catch (err) {
         console.error("无法获取历史记录", err);
         setHasMore(false);
+      } finally {
+        if (resetSeqRef.current === seq) resetSeqRef.current = null;
       }
     },
     [

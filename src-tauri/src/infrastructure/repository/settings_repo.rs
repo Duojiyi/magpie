@@ -172,10 +172,15 @@ impl SettingsRepository for SqliteSettingsRepository {
                 // only once it actually decrypted: an unreadable secret must stay untouched.
                 let reseal = encryption::needs_portable_reseal(&value) && !decrypted.is_empty();
                 if is_sensitive_key(key) && (!encryption::is_encrypted_payload(&value) || reseal) {
-                    let _ = conn.execute(
-                        "UPDATE settings SET value = ? WHERE key = ?",
-                        params![self.maybe_encrypt(key, &decrypted), key],
-                    );
+                    let sealed = self.maybe_encrypt(key, &decrypted);
+                    // maybe_encrypt falls back to plaintext when no key is usable; a re-seal
+                    // must never turn a sealed secret into cleartext.
+                    if !reseal || encryption::is_encrypted_payload(&sealed) {
+                        let _ = conn.execute(
+                            "UPDATE settings SET value = ? WHERE key = ?",
+                            params![sealed, key],
+                        );
+                    }
                 }
             }
 
@@ -232,10 +237,14 @@ impl SettingsRepository for SqliteSettingsRepository {
             {
                 let reseal = encryption::needs_portable_reseal(&value) && !decrypted.is_empty();
                 if is_sensitive_key(&key) && (!encryption::is_encrypted_payload(&value) || reseal) {
-                    let _ = conn.execute(
-                        "UPDATE settings SET value = ? WHERE key = ?",
-                        params![self.maybe_encrypt(&key, &decrypted), &key],
-                    );
+                    let sealed = self.maybe_encrypt(&key, &decrypted);
+                    // Never let a re-seal downgrade a sealed secret to plaintext (see get()).
+                    if !reseal || encryption::is_encrypted_payload(&sealed) {
+                        let _ = conn.execute(
+                            "UPDATE settings SET value = ? WHERE key = ?",
+                            params![sealed, &key],
+                        );
+                    }
                 }
             }
 

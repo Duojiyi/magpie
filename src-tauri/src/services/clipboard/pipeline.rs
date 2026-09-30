@@ -608,10 +608,8 @@ impl PipelineStage for PersistenceStage {
             let session_history = ctx.app_handle.state::<SessionHistory>();
             let mut session = session_history.0.lock().unwrap();
             session.push_back(entry.clone());
-            if session.len() > 500 {
-                if let Some(removed) = session.pop_front() {
-                    let _ = ctx.app_handle.emit("clipboard-removed", removed.id);
-                }
+            for removed in crate::app_state::trim_session_history(&mut session) {
+                let _ = ctx.app_handle.emit("clipboard-removed", removed);
             }
         }
     }

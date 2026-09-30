@@ -54,7 +54,7 @@ pub const ENCRYPT_PREFIX: &str = "dpapi:";
 #[cfg(windows)]
 pub fn encrypt_value(plain: &str) -> Option<String> {
     // Portable build with its data folder next to the exe: key file, see init_portable_key_dir.
-    if PORTABLE_KEY_DIR.get().is_some() {
+    if PREFER_KEY_FILE.load(std::sync::atomic::Ordering::SeqCst) {
         return portable_encrypt(plain);
     }
     let bytes = plain.as_bytes();
@@ -193,10 +193,18 @@ pub fn init_portable_key_dir(dir: std::path::PathBuf) {
     // A folder that already carries a key file holds key-file ciphertext (a portable data
     // folder opened by an installed copy, or moved with set_data_path, which takes the key
     // along); without the key those values would all read as unreadable.
+    // Reading key-file values is enabled either way; *writing* with the key file (and
+    // re-sealing DPAPI values into it) only for the portable folder. On a standard install
+    // DPAPI is the stronger choice: the key file only has the folder's inherited ACL.
     if is_portable_data_dir || dir.join("local.key").is_file() {
         let _ = PORTABLE_KEY_DIR.set(dir);
+        PREFER_KEY_FILE.store(is_portable_data_dir, std::sync::atomic::Ordering::SeqCst);
     }
 }
+
+/// Windows: seal new values with the key file instead of DPAPI (portable data folder).
+#[cfg(windows)]
+static PREFER_KEY_FILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// True for a value sealed with DPAPI while this install uses the key-file scheme: it only
 /// opens on the PC and Windows account that wrote it, so it should be re-sealed (Windows
@@ -204,7 +212,9 @@ pub fn init_portable_key_dir(dir: std::path::PathBuf) {
 pub fn needs_portable_reseal(value: &str) -> bool {
     #[cfg(windows)]
     {
-        PORTABLE_KEY_DIR.get().is_some() && value.starts_with(ENCRYPT_PREFIX)
+        PREFER_KEY_FILE.load(std::sync::atomic::Ordering::SeqCst)
+            && PORTABLE_KEY_DIR.get().is_some()
+            && value.starts_with(ENCRYPT_PREFIX)
     }
     #[cfg(not(windows))]
     {
@@ -232,17 +242,24 @@ fn portable_key() -> Option<[u8; 32]> {
         let dir = PORTABLE_KEY_DIR.get()?;
         let path = dir.join("local.key");
 
-        if let Ok(mut file) = std::fs::File::open(&path) {
-            let mut buf = Vec::new();
-            if file.read_to_end(&mut buf).is_ok() && buf.len() == 32 {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(&buf);
-                return Some(key);
+        match std::fs::File::open(&path) {
+            Ok(mut file) => {
+                let mut buf = Vec::new();
+                if file.read_to_end(&mut buf).is_ok() && buf.len() == 32 {
+                    let mut key = [0u8; 32];
+                    key.copy_from_slice(&buf);
+                    return Some(key);
+                }
+                // A short or unreadable key file means existing ciphertext is unrecoverable.
+                // Do NOT overwrite it: keep it for manual recovery and report "no key" so
+                // callers surface "unreadable" rather than silently re-keying.
+                return None;
             }
-            // A short or unreadable key file means existing ciphertext is unrecoverable.
-            // Do NOT overwrite it: keep it for manual recovery and report "no key" so callers
-            // surface "unreadable" rather than silently re-keying.
-            return None;
+            // Only a key that truly does not exist may be minted. Any other failure (a lock
+            // held by antivirus or a sync client, an ACL problem) must not replace the real
+            // key, which would make every existing value unreadable.
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => return None,
+            Err(_) => {}
         }
 
         // First run on this platform: mint a key. uuid gives us OS randomness without adding
@@ -292,8 +309,26 @@ fn portable_key() -> Option<[u8; 32]> {
             // Temp file + rename: a crash mid-write must not leave a short key file, which is
             // (deliberately) never overwritten and would disable at-rest encryption for good.
             let tmp = dir.join("local.key.tmp");
-            if std::fs::write(&tmp, key).is_err() || std::fs::rename(&tmp, &path).is_err() {
+            let written = (|| -> std::io::Result<()> {
+                use std::io::Write;
+                let mut file = std::fs::File::create(&tmp)?;
+                file.write_all(&key)?;
+                // Flushed to disk before the rename, or a crash could still leave the renamed
+                // file empty.
+                file.sync_all()
+            })();
+            // `path` did not exist a moment ago (NotFound above); if it appeared meanwhile,
+            // keep that one rather than replacing it.
+            if written.is_err() || path.exists() || std::fs::rename(&tmp, &path).is_err() {
                 let _ = std::fs::remove_file(&tmp);
+                if path.exists() {
+                    let existing = std::fs::read(&path).ok()?;
+                    if existing.len() == 32 {
+                        let mut key = [0u8; 32];
+                        key.copy_from_slice(&existing);
+                        return Some(key);
+                    }
+                }
                 return None;
             }
         }

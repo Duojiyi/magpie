@@ -87,13 +87,13 @@ pub async fn paste_next_step(app_handle: tauri::AppHandle) {
     let db_state = app_handle.state::<DbState>();
     let session = app_handle.state::<SessionHistory>();
 
-    // 1. Pop item from queue (Scope the lock)
-    let id_opt = {
-        let mut queue = state.inner().0.lock().unwrap();
-        queue.items.pop_front()
-    };
-
-    if let Some(id) = id_opt {
+    // 1. Pop the next item that still exists (Scope the lock). A queued item deleted in the
+    // meantime is skipped (and reported as done) instead of swallowing the keystroke and
+    // leaving the queue stuck on it.
+    let next = loop {
+        let Some(id) = state.inner().0.lock().unwrap().items.pop_front() else {
+            break None;
+        };
         // 2. Get Content (DB Lock acquired here, safe because Queue lock is released)
         let content_opt = if id < 0 {
             let s = session.inner().0.lock().unwrap();
@@ -110,8 +110,17 @@ pub async fn paste_next_step(app_handle: tauri::AppHandle) {
                 .get_entry_content_with_html(id)
                 .unwrap_or(None)
         };
+        match content_opt {
+            Some(content) => break Some((id, content)),
+            None => {
+                let _ = app_handle.emit("queue-item-pasted", id);
+            }
+        }
+    };
 
-        if let Some((content, c_type, html_content)) = content_opt {
+    if let Some((id, content_opt)) = next {
+        {
+            let (content, c_type, html_content) = content_opt;
             crate::services::clipboard_ops::remember_recent_paste(
                 &app_handle,
                 &content,
@@ -192,20 +201,15 @@ pub async fn paste_next_step(app_handle: tauri::AppHandle) {
             }
 
             // Perform deletion if delete_after_paste is enabled
-            let mut actual_delete = {
-                let settings_state = app_handle.state::<crate::app_state::SettingsState>();
-                settings_state
-                    .delete_after_paste
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            };
-
-            if actual_delete && id > 0 {
-                if let Ok(Some(entry)) = db_state.repo.get_entry_by_id(id) {
-                    if entry.is_pinned || !entry.tags.is_empty() {
-                        actual_delete = false;
-                    }
-                }
-            }
+            let actual_delete = app_handle
+                .state::<crate::app_state::SettingsState>()
+                .delete_after_paste
+                .load(std::sync::atomic::Ordering::Relaxed)
+                && !crate::services::clipboard_ops::is_kept_after_paste(
+                    &app_handle,
+                    &db_state,
+                    id,
+                );
 
             if actual_delete {
                 // Remove from session history first

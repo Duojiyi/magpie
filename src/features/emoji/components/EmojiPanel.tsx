@@ -607,6 +607,9 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
               }}
               onDrop={(e) => {
                 e.preventDefault();
+                // The window-level drop listener would handle this drop a second time
+                // (downloading / saving the same image twice).
+                e.stopPropagation();
                 setIsDragging(false);
                 void handleDomDrop(e);
               }}

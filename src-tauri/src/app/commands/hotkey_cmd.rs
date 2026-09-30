@@ -38,7 +38,13 @@ pub(crate) fn sync_registered_hotkeys(app_handle: &AppHandle) -> AppResult<()> {
     };
 
     let main_hotkey = settings.main_hotkey.lock().unwrap().clone();
-    register_shortcut_with_scope(app_handle, &main_hotkey, hotkey_scope(app_handle, "main"));
+    // The main hotkey summons the hidden panel, so it has no in-app meaning: a stored
+    // InAppOnly (older builds offered it) would leave the panel unreachable by keyboard.
+    let main_scope = match hotkey_scope(app_handle, "main") {
+        HotkeyScope::InAppOnly => HotkeyScope::Global,
+        scope => scope,
+    };
+    register_shortcut_with_scope(app_handle, &main_hotkey, main_scope);
 
     let sequential_mode = settings.sequential_mode.load(Ordering::Relaxed);
     let sequential_hotkey = settings.sequential_paste_hotkey.lock().unwrap().clone();
@@ -87,6 +93,12 @@ pub fn test_hotkey_available(app_handle: AppHandle, hotkey: String) -> AppResult
     let shortcut = normalized
         .parse::<Shortcut>()
         .map_err(|_| AppError::Validation("快捷键格式无效".to_string()))?;
+
+    // Already registered by us (e.g. re-recording the current hotkey): available, and probing
+    // it would fail as "taken by another program" and then unregister our own binding.
+    if app_handle.global_shortcut().is_registered(shortcut.clone()) {
+        return Ok(true);
+    }
 
     match app_handle.global_shortcut().register(shortcut.clone()) {
         Ok(_) => {

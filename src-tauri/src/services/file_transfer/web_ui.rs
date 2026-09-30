@@ -964,7 +964,9 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
             scrollToBottom();
 
             const CHUNK_SIZE = 1024 * 512; // 512KB
-            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            // An empty file is still one (empty) chunk; 0 chunks sent nothing yet showed ✓.
+            const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+            let failed = false;
             const uploadId = Math.random().toString(36).substr(2, 9);
 
             for (let i = 0; i < totalChunks; i++) {{
@@ -999,13 +1001,16 @@ pub fn render_index(theme: &str, color_mode: &str, logo_base64: &str) -> String 
                     const list = pendingUploads.get(file.name) || [];
                     const idx = list.indexOf(el);
                     if (idx >= 0) {{ list.splice(idx, 1); }}
-                    if (list.length === 0) pendingUploads.delete(name);
+                    if (list.length === 0) pendingUploads.delete(file.name);
+                    failed = true;
                     break;
                 }}
             }}
             
             progressWrapper.remove();
-            el.querySelector('.bubble').innerHTML += ' <span style="color:#4caf50">✓</span>';
+            el.querySelector('.bubble').innerHTML += failed
+                ? ' <span style="color:#f44336">✗</span>'
+                : ' <span style="color:#4caf50">✓</span>';
             isUploading = false;
         }}
 

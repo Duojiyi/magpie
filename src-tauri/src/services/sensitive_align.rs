@@ -27,7 +27,26 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
         .get(SENSITIVE_ALIGNMENT_DONE_KEY)
         .unwrap_or(None)
         .unwrap_or_else(|| "false".to_string());
-    if done == "true" && !force {
+    // The DPAPI re-seal (Windows portable, see encryption::needs_portable_reseal) is not tied
+    // to the one-time flag: it must run whenever DPAPI rows are still there, e.g. on the first
+    // start after upgrading an install whose alignment finished long ago.
+    let pending_dpapi_reseal = encryption::needs_portable_reseal(encryption::ENCRYPT_PREFIX)
+        && db_state
+            .conn
+            .lock()
+            .ok()
+            .and_then(|conn| {
+                conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM clipboard_history
+                     WHERE content LIKE 'dpapi:%' OR preview LIKE 'dpapi:%'
+                        OR html_content LIKE 'dpapi:%')",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .ok()
+            })
+            .unwrap_or(false);
+    if done == "true" && !force && !pending_dpapi_reseal {
         return;
     }
 
