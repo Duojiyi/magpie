@@ -510,6 +510,18 @@ impl SqliteClipboardRepository {
         id: i64,
         data_dir: Option<&std::path::Path>,
     ) -> Result<(), String> {
+        self.delete_row_with_conn(conn, id, data_dir, None)
+    }
+
+    /// `deferred_files`: when set, attachment files are collected there instead of being
+    /// removed now, so a bulk delete can check each file once after all rows are gone.
+    fn delete_row_with_conn(
+        &self,
+        conn: &Connection,
+        id: i64,
+        data_dir: Option<&std::path::Path>,
+        mut deferred_files: Option<&mut HashSet<PathBuf>>,
+    ) -> Result<(), String> {
         let mut tombstone: Option<(String, i64)> = None;
         // Check for external files to delete
         if let Some(dir) = data_dir {
@@ -539,7 +551,9 @@ impl SqliteClipboardRepository {
                     &attachments_dir,
                 );
                 for path in files_to_remove {
-                    if path.exists() && !attachment_still_referenced(conn, id, &path) {
+                    if let Some(deferred) = deferred_files.as_deref_mut() {
+                        deferred.insert(path);
+                    } else if path.exists() && !attachment_still_referenced(conn, id, &path) {
                         let _ = std::fs::remove_file(path);
                     }
                 }
@@ -1282,9 +1296,26 @@ impl ClipboardRepository for SqliteClipboardRepository {
             .map_err(|e| e.to_string())?;
         let ids: Vec<i64> = rows.filter_map(Result::ok).collect();
 
-        // Delete one-by-one so tombstones are recorded for cloud deletion sync.
+        // Delete one-by-one so tombstones are recorded for cloud deletion sync, inside one
+        // transaction (one fsync instead of one per row). Attachment files are collected and
+        // checked once at the end against the rows that remain: checking each file while
+        // deleting meant a full-table scan per deleted image row.
+        let mut candidate_files: HashSet<PathBuf> = HashSet::new();
+        conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
         for id in &ids {
-            self.delete_with_conn(&conn, *id, data_dir)?;
+            if let Err(e) =
+                self.delete_row_with_conn(&conn, *id, data_dir, Some(&mut candidate_files))
+            {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        for path in candidate_files {
+            // No row is excluded any more: the deleted ones are gone.
+            if path.exists() && !attachment_still_referenced(&conn, 0, &path) {
+                let _ = std::fs::remove_file(path);
+            }
         }
 
         // VACUUM to reclaim space

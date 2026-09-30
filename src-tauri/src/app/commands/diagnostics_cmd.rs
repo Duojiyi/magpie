@@ -120,7 +120,21 @@ pub fn copy_diagnostics(app: AppHandle, state: State<'_, AppDataDir>) -> AppResu
         .settings_repo
         .get_all()
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let mut keys: Vec<&String> = settings.keys().filter(|k| !is_sensitive_key(k)).collect();
+    // Beyond the encrypted secrets: the E2E salt + verifier together allow offline guessing of
+    // the passphrase, and account names / server URLs (which may embed `user:pass@`) identify
+    // the user. Diagnostics get pasted into public issues.
+    let is_private_for_report = |k: &str| {
+        k.starts_with("cloud_sync_e2e_")
+            || k == "file_server_access_key"
+            || k.ends_with("_username")
+            || k == "cloud_sync_webdav_url"
+            || k == "cloud_sync_server"
+            || k == "mqtt_server"
+    };
+    let mut keys: Vec<&String> = settings
+        .keys()
+        .filter(|k| !is_sensitive_key(k) && !is_private_for_report(k))
+        .collect();
     keys.sort();
     let mut settings_summary = String::new();
     for k in keys {

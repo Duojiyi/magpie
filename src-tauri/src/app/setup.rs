@@ -118,16 +118,8 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // apply_mica/apply_acrylic 基于 HWND 的 DWM 调用对隐藏窗口同样有效，因此可先设透明、后显示。
     apply_initial_theme(app);
 
-    // 8. 主题(透明效果)就绪后再显示窗口骨架，此时窗口一出现即为透明，无不透明方框闪烁。
-    show_window_skeleton(app, &settings);
-
-    // 9. Background Services & Monitors（C4 需求 23.4：tokio::join! 并行启动）
-    start_services(app, &settings, app_handle.clone());
-
-    // 10. Tray Setup
-    setup_tray(app, settings.hide_tray_icon);
-
-    // 10.1 macOS: re-apply "hide Dock icon" (saved by set_dock_visible).
+    // 7.1 macOS: re-apply "hide Dock icon" (saved by set_dock_visible) before any window is
+    // shown, so the icon does not flash in the Dock on every launch.
     #[cfg(target_os = "macos")]
     if app
         .state::<DbState>()
@@ -140,6 +132,15 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     {
         let _ = app.handle().set_dock_visibility(false);
     }
+
+    // 8. 主题(透明效果)就绪后再显示窗口骨架，此时窗口一出现即为透明，无不透明方框闪烁。
+    show_window_skeleton(app, &settings);
+
+    // 9. Background Services & Monitors（C4 需求 23.4：tokio::join! 并行启动）
+    start_services(app, &settings, app_handle.clone());
+
+    // 10. Tray Setup
+    setup_tray(app, settings.hide_tray_icon);
 
     // 11. Win32 Hook Initialization
     #[cfg(target_os = "windows")]
@@ -268,6 +269,7 @@ fn resolve_data_dir(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error:
             );
             app_dir = resolved;
             portable_used = used;
+            PORTABLE_MODE_ACTIVE.store(used, Ordering::SeqCst);
             if degraded {
                 // A10(需求 8.8)：检测到便携标志（README_PORTABLE.md）说明期望以便携模式运行，
                 // 但 exe_dir/data/ 缺失（如被误删）。降级为标准模式：使用 %APPDATA%\app.magpie，
@@ -603,6 +605,10 @@ fn setup_state(
     app.manage(SessionHistory(std::sync::Mutex::new(
         std::collections::VecDeque::new(),
     )));
+    // The static asset scope ($APPDATA, $HOME…) does not cover a portable `<exe>/data` folder
+    // or a custom data path on another drive; without this every attachment and emoji image
+    // there failed to load.
+    let _ = app.asset_protocol_scope().allow_directory(&app_dir, true);
     app.manage(AppDataDir(std::sync::Mutex::new(app_dir)));
     app.manage(crate::services::file_transfer::ChatState::default());
     app.manage(crate::services::file_transfer::SharedFileState(

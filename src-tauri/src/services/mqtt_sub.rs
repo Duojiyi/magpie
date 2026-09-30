@@ -5,7 +5,7 @@ use crate::{error, info};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, Transport};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::time::sleep;
@@ -30,6 +30,7 @@ static MQTT_RUNNING: AtomicBool = AtomicBool::new(false);
 static MQTT_CONNECTED: AtomicBool = AtomicBool::new(false);
 static MQTT_RECONNECT_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 static MQTT_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
+static MQTT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Reject MQTT payloads larger than this before we allocate/hash/clone them. A hostile
 /// or misconfigured broker could otherwise push arbitrarily large messages and drive the
@@ -69,6 +70,7 @@ pub fn get_mqtt_running() -> bool {
 // Force restart MQTT client by setting running flag to false
 pub fn restart_mqtt_client(app: AppHandle) {
     info!(">>> [MQTT] Restart requested.");
+    MQTT_GENERATION.fetch_add(1, Ordering::SeqCst);
     MQTT_RUNNING.store(false, Ordering::Relaxed);
     MQTT_CONNECTED.store(false, Ordering::Relaxed);
     MQTT_RECONNECT_ATTEMPTS.store(0, Ordering::Relaxed);
@@ -299,6 +301,11 @@ pub fn start_mqtt_client(app: AppHandle) {
                     format!("/{}", cfg.ws_path)
                 };
 
+                // Settings changes bump the generation; the connected loop below compares it so a
+                // restart (new server/topic/credentials, or MQTT switched off) takes effect now
+                // instead of whenever the current connection happens to drop.
+                let generation = MQTT_GENERATION.load(Ordering::SeqCst);
+
                 info!(
                     ">>> [MQTT] Connecting to '{}:{}' (Protocol: {}, ID: {})",
                     host_clean, cfg.port, cfg.protocol, cfg.client_id
@@ -447,7 +454,10 @@ pub fn start_mqtt_client(app: AppHandle) {
                     let _ = app.emit("mqtt-status", "disconnected");
 
                     // Cap backoff at 60 seconds
-                    let wait_secs = (5 * u64::pow(2, (current_attempts as u32).saturating_sub(1))).min(60);
+                    // Exponent capped before shifting: `2^attempts` overflowed after ~64 failed
+                    // attempts (an hour offline) and wrapped to a zero delay, a hot reconnect loop.
+                    let exponent = (current_attempts as u32).saturating_sub(1).min(4);
+                    let wait_secs = (5u64 << exponent).min(60);
                     info!(">>> [MQTT] Retrying in {}s (Attempt {})...", wait_secs, current_attempts);
                     sleep(Duration::from_secs(wait_secs)).await;
                     continue;
@@ -462,6 +472,16 @@ pub fn start_mqtt_client(app: AppHandle) {
                 info!(">>> [MQTT] Subscribed to {}", sub_topic);
 
                 loop {
+                    if MQTT_GENERATION.load(Ordering::SeqCst) != generation {
+                        info!(">>> [MQTT] Restart requested, dropping current connection.");
+                        // Non-blocking: the event loop is no longer polled, so an awaited
+                        // disconnect could wait on a full request channel. Dropping the
+                        // event loop closes the socket either way.
+                        let _ = client.try_disconnect();
+                        MQTT_CONNECTED.store(false, Ordering::Relaxed);
+                        let _ = app.emit("mqtt-status", "disconnected");
+                        break;
+                    }
                     match tokio::time::timeout(Duration::from_secs(5), eventloop.poll()).await {
                         Ok(event_result) => match event_result {
                             Ok(Event::Incoming(notification)) => match notification {

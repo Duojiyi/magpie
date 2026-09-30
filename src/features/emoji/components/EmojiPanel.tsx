@@ -649,8 +649,11 @@ const EmojiPanel = ({ t, favorites, setFavorites, activeTab, setActiveTab, saveS
                           src={convertFileSrc(path)}
                           alt={name}
                           onError={(e) => {
+                            // Never delete on a load error: an asset-scope refusal (portable or
+                            // custom data folder) or one bad decode used to wipe the user's
+                            // favorites from disk. Dim it; the X button still removes it.
                             e.currentTarget.onerror = null;
-                            removeFavoritePath(path);
+                            e.currentTarget.style.opacity = "0.25";
                           }}
                         />
                       </button>

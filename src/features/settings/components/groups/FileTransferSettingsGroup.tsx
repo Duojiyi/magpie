@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, HelpCircle, Send } from "lucide-react";
 import { motion } from "framer-motion";
-import { QRCodeCanvas } from "qrcode.react";
+import FileServerQr from "../../../file-transfer/components/FileServerQr";
 
 interface FileTransferSettingsGroupProps {
     t: (key: string) => string;
@@ -213,7 +213,7 @@ const FileTransferSettingsGroup = ({
                             >
                                 <div className="file-transfer-panel">
                                     <div className="qr-container">
-                                        <QRCodeCanvas value={`http://${localIp}:${actualPort}`} size={90} />
+                                        <FileServerQr ip={localIp} port={actualPort} size={90} />
                                         <div className="qr-label">SCAN ME</div>
                                     </div>
                                     <div className="transfer-info">

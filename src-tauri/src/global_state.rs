@@ -53,3 +53,6 @@ pub static IS_MOUSE_BUTTON_DOWN: AtomicBool = AtomicBool::new(false);
 pub static NAVIGATION_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static NAVIGATION_MODE_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static IS_MAIN_WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
+/// Running from the portable package (data next to the exe). The installer-based updater
+/// must not run then: it would install a second, non-portable copy.
+pub static PORTABLE_MODE_ACTIVE: AtomicBool = AtomicBool::new(false);

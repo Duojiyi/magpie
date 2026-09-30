@@ -34,9 +34,13 @@ export const useAppActions = ({
           "mqtt_password",
           "mqtt_topic",
           "mqtt_protocol",
-          "mqtt_client_id"
+          "mqtt_client_id",
+          "mqtt_ws_path",
+          "mqtt_tls_insecure"
         ];
-        if (key === "mqtt_enabled" && value === "true") {
+        if (key === "mqtt_enabled") {
+          // Also on "false": the restart makes the live connection drop now, instead of
+          // continuing to apply incoming messages after the user switched sync off.
           await invoke("restart_mqtt_client");
           console.log("MQTT client restarted due to mqtt_enabled toggle");
         } else if (mqttKeys.includes(key) && mqttEnabled) {

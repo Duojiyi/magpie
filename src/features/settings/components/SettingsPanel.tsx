@@ -1,5 +1,6 @@
 
-import { memo, useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useCallback, useRef } from "react";
+import { useSwitchAccessibleNames } from "../../../shared/hooks/useSwitchAccessibleNames";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -306,6 +307,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
     } = props;
 
     const [appVersion, setAppVersion] = useState("");
+    const settingsRootRef = useRef<HTMLDivElement | null>(null);
+    useSwitchAccessibleNames(settingsRootRef);
     const [mqttStatus, setMqttStatus] = useState<"connected" | "disconnected" | "connecting">("disconnected");
     const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatusPayload>({
         state: "disabled",
@@ -511,6 +514,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
 
     return (
         <motion.div
+            ref={settingsRootRef}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             style={{ display: 'flex', flexDirection: 'column', gap: '4px', minHeight: '100%', flex: 1 }}

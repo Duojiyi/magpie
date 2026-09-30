@@ -18,7 +18,7 @@ import {
     Send,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { QRCodeCanvas } from "qrcode.react";
+import FileServerQr from "./FileServerQr";
 import type {
     FileTransferChatViewProps,
     FileTransferContextMenu,
@@ -530,7 +530,7 @@ const FileTransferChatView = ({
                 <div className="wt-header">
                     <div className="wt-info-panel">
                         <div className="wt-qr-container">
-                            <QRCodeCanvas value={`http://${localIp}:${actualPort}`} size={64} />
+                            <FileServerQr ip={localIp} port={actualPort} size={64} />
                         </div>
                         <div className="wt-info-list" style={{ flex: 1 }}>
                             <div className="wt-info-row">

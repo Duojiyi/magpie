@@ -153,7 +153,11 @@ const GeneralSettingsGroup = ({
                             onChange={(e) => {
                                 const val = e.target.checked;
                                 setHideTrayIcon(val);
-                                invoke("set_tray_visible", { visible: !val }).catch(console.error);
+                                invoke("set_tray_visible", { visible: !val }).catch((err) => {
+                                    console.error(err);
+                                    setHideTrayIcon(!val);
+                                    emit("toast", { msg: String(err), variant: "error" }).catch(console.error);
+                                });
                             }}
                         />
                         <div className="toggle"><div className="left" /><div className="right" /></div>
@@ -175,7 +179,11 @@ const GeneralSettingsGroup = ({
                                 onChange={(e) => {
                                     const val = e.target.checked;
                                     setHideDockIcon(val);
-                                    invoke("set_dock_visible", { visible: !val }).catch(console.error);
+                                    invoke("set_dock_visible", { visible: !val }).catch((err) => {
+                                        console.error(err);
+                                        setHideDockIcon(!val);
+                                        emit("toast", { msg: String(err), variant: "error" }).catch(console.error);
+                                    });
                                 }}
                             />
                             <div className="toggle"><div className="left" /><div className="right" /></div>

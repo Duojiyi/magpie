@@ -41,7 +41,14 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        // Launching the app again (Start menu, Dock, desktop icon) should bring up the running
+        // instance instead of silently doing nothing — the only way back in when the tray or
+        // Dock icon is hidden and the hotkey is forgotten.
+        .plugin(tauri_plugin_single_instance::init(|handle, _args, _cwd| {
+            if !app::commands::hotkey_cmd::is_main_panel_visible(handle) {
+                app::window_manager::toggle_window(handle);
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -125,6 +132,7 @@ fn main() {
             app::commands::set_edge_docking,
             app::commands::set_follow_mouse,
             app::commands::get_data_path,
+            app::commands::is_portable_mode,
             app::commands::open_folder,
             app::commands::open_data_folder,
             app::commands::open_file_with_default_app,
@@ -178,6 +186,7 @@ fn main() {
             services::file_transfer::save_temp_image,
             services::file_transfer::get_download_url,
             services::file_transfer::set_display_ip,
+            services::file_transfer::get_file_server_access_key,
             services::paste_queue::get_paste_queue,
             services::paste_queue::set_paste_queue,
             services::paste_queue::paste_next_step,

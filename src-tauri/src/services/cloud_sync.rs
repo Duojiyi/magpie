@@ -208,7 +208,38 @@ struct WebDavDeviceSnapshot {
 struct WebDavSettingsSnapshot {
     device_id: String,
     updated_at: i64,
+    /// Cleartext settings (E2E off). Empty when `sealed` is used, so older clients that do
+    /// not know `sealed` simply see nothing to apply.
+    #[serde(default)]
     settings: HashMap<String, String>,
+    /// E2E on: the settings map as an authenticated envelope bound to device id and
+    /// `updated_at`, so the WebDAV server can neither read nor alter or re-date them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sealed: Option<String>,
+}
+
+fn settings_snapshot_aad(device_id: &str, updated_at: i64) -> Vec<u8> {
+    crate::services::cloud_crypto::build_aad(&format!("settings/{device_id}/{updated_at}"), 0)
+}
+
+/// The settings a fetched snapshot may apply. With E2E on only a sealed snapshot that
+/// authenticates under our key counts; an unsealed one is refused, because the server could
+/// have written it. With E2E off a sealed snapshot is unreadable and skipped.
+fn open_settings_snapshot(
+    snapshot: &WebDavSettingsSnapshot,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
+) -> Option<HashMap<String, String>> {
+    match (cryptor, snapshot.sealed.as_deref()) {
+        (Some(key), Some(envelope)) => crate::services::cloud_crypto::decrypt_field(
+            key,
+            envelope,
+            &settings_snapshot_aad(&snapshot.device_id, snapshot.updated_at),
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok()),
+        (None, None) => Some(snapshot.settings.clone()),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -584,6 +615,10 @@ fn is_setting_sync_eligible(key: &str) -> bool {
             | "app.file"
             | "app.video"
             | "app.rich_text"
+            // Where LAN uploads are written: a machine-specific path the server must not set.
+            | "file_transfer_path"
+            // Per-machine LAN access key for the file-transfer server.
+            | "file_server_access_key"
     )
 }
 
@@ -2823,13 +2858,35 @@ async fn upload_webdav_settings_snapshot(
     client: &Client,
     cfg: &CloudSyncConfig,
     settings_path: &str,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<HashMap<String, String>> {
     let local_settings = collect_syncable_settings(app)?;
 
-    let snapshot = WebDavSettingsSnapshot {
-        device_id: cfg.device_id.clone(),
-        updated_at: now_ms(),
-        settings: local_settings.clone(),
+    let updated_at = now_ms();
+    let snapshot = match cryptor {
+        Some(key) => {
+            let json = serde_json::to_string(&local_settings).map_err(|e| {
+                AppError::Internal(format!("serialize settings snapshot failed: {}", e))
+            })?;
+            let sealed = crate::services::cloud_crypto::encrypt_field(
+                key,
+                &json,
+                &settings_snapshot_aad(&cfg.device_id, updated_at),
+            )
+            .map_err(AppError::Encryption)?;
+            WebDavSettingsSnapshot {
+                device_id: cfg.device_id.clone(),
+                updated_at,
+                settings: HashMap::new(),
+                sealed: Some(sealed),
+            }
+        }
+        None => WebDavSettingsSnapshot {
+            device_id: cfg.device_id.clone(),
+            updated_at,
+            settings: local_settings.clone(),
+            sealed: None,
+        },
     };
     let body = serde_json::to_vec(&snapshot)
         .map_err(|e| AppError::Internal(format!("serialize settings snapshot failed: {}", e)))?;
@@ -2858,60 +2915,6 @@ async fn fetch_webdav_settings_snapshot(
         false,
     )
     .await
-}
-
-async fn pull_remote_settings_snapshot(
-    app: &AppHandle,
-    client: &Client,
-    cfg: &CloudSyncConfig,
-    settings_path: &str,
-) -> AppResult<usize> {
-    let db_state = app
-        .try_state::<DbState>()
-        .ok_or_else(|| AppError::Internal("DB state unavailable".to_string()))?;
-    let last_applied_ts = db_state
-        .settings_repo
-        .get("cloud_sync_settings_applied_at")
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
-
-    let ids = list_webdav_snapshot_ids(client, cfg, settings_path).await?;
-    let mut latest: Option<WebDavSettingsSnapshot> = None;
-    for device_id in ids.into_iter().take(MAX_REMOTE_SNAPSHOTS) {
-        if crate::app::system::same_anon_id(&device_id, &cfg.device_id) {
-            continue;
-        }
-        if let Some(snapshot) =
-            fetch_webdav_settings_snapshot(client, cfg, settings_path, &device_id).await?
-        {
-            let replace = latest
-                .as_ref()
-                .map(|cur| snapshot.updated_at > cur.updated_at)
-                .unwrap_or(true);
-            if replace {
-                latest = Some(snapshot);
-            }
-        }
-    }
-
-    let Some(snapshot) = latest else {
-        return Ok(0);
-    };
-    if snapshot.updated_at <= last_applied_ts {
-        return Ok(0);
-    }
-
-    let changed = apply_synced_settings(app, &snapshot.settings)?;
-    db_state
-        .settings_repo
-        .set(
-            "cloud_sync_settings_applied_at",
-            &snapshot.updated_at.to_string(),
-        )
-        .map_err(AppError::from)?;
-    Ok(changed)
 }
 
 fn should_rebuild_webdav_head(app: &AppHandle, now: i64) -> bool {
@@ -3565,6 +3568,7 @@ async fn pull_remote_settings_snapshot_from_head(
     cfg: &CloudSyncConfig,
     settings_path: &str,
     head: &WebDavSyncHead,
+    cryptor: Option<&crate::services::cloud_crypto::CloudCryptoKey>,
 ) -> AppResult<usize> {
     let db_state = app
         .try_state::<DbState>()
@@ -3602,8 +3606,13 @@ async fn pull_remote_settings_snapshot_from_head(
     if snapshot.updated_at <= last_applied_ts {
         return Ok(0);
     }
+    let Some(settings) = open_settings_snapshot(&snapshot, cryptor) else {
+        // Unauthenticated (E2E on, snapshot not sealed), unreadable, or tampered: skip it.
+        // Not marked as applied, so a later valid snapshot from that device still lands.
+        return Ok(0);
+    };
 
-    let changed = apply_synced_settings(app, &snapshot.settings)?;
+    let changed = apply_synced_settings(app, &settings)?;
     db_state
         .settings_repo
         .set(
@@ -3996,6 +4005,7 @@ async fn sync_once_webdav(
             cfg,
             &paths.settings_path,
             &sync_head,
+            cryptor,
         )
         .await?;
         set_setting_i64(app, CLOUD_SYNC_WEBDAV_LAST_SNAPSHOT_PULL_AT_KEY, now);
@@ -4044,7 +4054,8 @@ async fn sync_once_webdav(
             device.snapshot_op_seq = device.snapshot_op_seq.max(latest_op_seq);
         });
         let local_settings =
-            upload_webdav_settings_snapshot(app, &client, cfg, &paths.settings_path).await?;
+            upload_webdav_settings_snapshot(app, &client, cfg, &paths.settings_path, cryptor)
+                .await?;
         uploaded_items += local_settings.len();
         update_webdav_head_device(&mut sync_head, &cfg.device_id, |device| {
             device.settings_updated_at = device.settings_updated_at.max(now_ms());
@@ -4498,6 +4509,52 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn e2e_settings_snapshot_is_authenticated() {
+        use super::{open_settings_snapshot, settings_snapshot_aad, WebDavSettingsSnapshot};
+        let key = crate::services::cloud_crypto::derive_key("pass phrase", b"0123456789abcdef")
+            .expect("derive key");
+        let mut settings = HashMap::new();
+        settings.insert("app.theme".to_string(), "ink".to_string());
+        let json = serde_json::to_string(&settings).unwrap();
+        let sealed = crate::services::cloud_crypto::encrypt_field(
+            &key,
+            &json,
+            &settings_snapshot_aad("dev-a", 100),
+        )
+        .unwrap();
+        let snapshot = |updated_at: i64, sealed: Option<String>, plain: HashMap<String, String>| {
+            WebDavSettingsSnapshot {
+                device_id: "dev-a".to_string(),
+                updated_at,
+                settings: plain,
+                sealed,
+            }
+        };
+
+        // Genuine sealed snapshot opens.
+        assert_eq!(
+            open_settings_snapshot(&snapshot(100, Some(sealed.clone()), HashMap::new()), Some(&key)),
+            Some(settings.clone())
+        );
+        // Re-dated by the server: the AAD no longer matches.
+        assert_eq!(
+            open_settings_snapshot(&snapshot(999, Some(sealed.clone()), HashMap::new()), Some(&key)),
+            None
+        );
+        // E2E on but the server wrote a cleartext snapshot: refused.
+        assert_eq!(
+            open_settings_snapshot(&snapshot(100, None, settings.clone()), Some(&key)),
+            None
+        );
+        // E2E off: cleartext applies, sealed is unreadable.
+        assert_eq!(
+            open_settings_snapshot(&snapshot(100, None, settings.clone()), None),
+            Some(settings.clone())
+        );
+        assert_eq!(open_settings_snapshot(&snapshot(100, Some(sealed), HashMap::new()), None), None);
+    }
 
     #[test]
     fn webdav_move_fallback_policy() {

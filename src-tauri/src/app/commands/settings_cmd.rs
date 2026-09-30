@@ -471,16 +471,23 @@ pub fn set_dock_visible(
     db_state: State<'_, DbState>,
     visible: bool,
 ) -> AppResult<()> {
-    db_state
-        .settings_repo
-        .set("app.hide_dock_icon", if visible { "false" } else { "true" })
-        .map_err(AppError::from)?;
+    let settings = app_handle.state::<crate::app_state::SettingsState>();
+    if !visible && settings.hide_tray_icon.load(Ordering::Relaxed) {
+        // Same lockout as in set_tray_visible, from the other side.
+        return Err(AppError::Validation(
+            "托盘图标已隐藏，不能同时隐藏 Dock 图标 / The tray icon is hidden; keep the Dock icon visible"
+                .to_string(),
+        ));
+    }
+    // Apply first, persist after: a failed apply must not leave a saved "hidden" state.
     #[cfg(target_os = "macos")]
     app_handle
         .set_dock_visibility(visible)
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    #[cfg(not(target_os = "macos"))]
-    let _ = app_handle;
+    db_state
+        .settings_repo
+        .set("app.hide_dock_icon", if visible { "false" } else { "true" })
+        .map_err(AppError::from)?;
     Ok(())
 }
 
@@ -581,6 +588,24 @@ pub fn set_tray_visible(
     state: State<'_, crate::app_state::SettingsState>,
     visible: bool,
 ) -> AppResult<()> {
+    // macOS: with both the Dock icon and the tray icon hidden, only the global hotkey can
+    // bring the app back. Refuse the second one instead of locking the user out.
+    #[cfg(target_os = "macos")]
+    if !visible
+        && app_handle
+            .state::<DbState>()
+            .settings_repo
+            .get("app.hide_dock_icon")
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some("true")
+    {
+        return Err(AppError::Validation(
+            "Dock 图标已隐藏，不能同时隐藏托盘图标 / The Dock icon is hidden; keep the tray icon visible"
+                .to_string(),
+        ));
+    }
     state.hide_tray_icon.store(!visible, Ordering::Relaxed);
     if let Some(tray) = app_handle.tray_by_id("main_tray") {
         let _ = tray.set_visible(visible);

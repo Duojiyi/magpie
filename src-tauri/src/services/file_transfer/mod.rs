@@ -26,6 +26,103 @@ pub use utils::*;
 
 pub static SERVER_HANDLE: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
+/// Setting that holds the LAN access key. Local-only: excluded from settings sync and from
+/// copied diagnostics.
+pub const ACCESS_KEY_SETTING: &str = "file_server_access_key";
+const ACCESS_COOKIE: &str = "mgk";
+
+/// The key a LAN client must present. The server listens on 0.0.0.0 and used to accept
+/// anyone on the network: read the chat, fetch download tokens, upload files and write text
+/// to this machine's clipboard. The key travels in the QR code / link shown in Magpie
+/// (`?k=`) and is then kept in an HttpOnly cookie. Generated once and persisted, so a
+/// phone's bookmark keeps working across restarts.
+pub fn file_server_access_key(app: &AppHandle) -> String {
+    let db = app.state::<DbState>();
+    if let Ok(Some(key)) = db.settings_repo.get(ACCESS_KEY_SETTING) {
+        if key.len() >= 32 && key.chars().all(|c| c.is_ascii_hexdigit()) {
+            return key;
+        }
+    }
+    let key = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let _ = db.settings_repo.set(ACCESS_KEY_SETTING, &key);
+    key
+}
+
+#[tauri::command]
+pub fn get_file_server_access_key(app_handle: AppHandle) -> String {
+    file_server_access_key(&app_handle)
+}
+
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a
+            .bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+/// Pure decision for the access middleware: `Some(set_cookie)` when allowed.
+fn access_decision(path: &str, query: Option<&str>, cookie: Option<&str>, key: &str) -> Option<bool> {
+    // Download links are already guarded by an unguessable per-file token, and the desktop
+    // chat view (a different origin, without the cookie) loads them too.
+    if path.starts_with("/download/") {
+        return Some(false);
+    }
+    let from_query = query
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("k=")))
+        .is_some_and(|k| constant_time_eq(k, key));
+    if from_query {
+        return Some(true);
+    }
+    let from_cookie = cookie
+        .and_then(|c| {
+            c.split(';')
+                .find_map(|part| part.trim().strip_prefix(&format!("{ACCESS_COOKIE}=")).map(str::to_string))
+        })
+        .is_some_and(|k| constant_time_eq(&k, key));
+    from_cookie.then_some(false)
+}
+
+async fn require_access_key(
+    axum::extract::State(key): axum::extract::State<Arc<String>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue, StatusCode};
+    use axum::response::IntoResponse;
+
+    let cookie = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let decision = access_decision(req.uri().path(), req.uri().query(), cookie.as_deref(), &key);
+    match decision {
+        Some(set_cookie) => {
+            let mut resp = next.run(req).await;
+            if set_cookie {
+                if let Ok(value) = HeaderValue::from_str(&format!(
+                    "{ACCESS_COOKIE}={key}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
+                )) {
+                    resp.headers_mut().append(header::SET_COOKIE, value);
+                }
+            }
+            resp
+        }
+        None => (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            "<!doctype html><meta name=viewport content=\"width=device-width\"><p style=\"font:16px sans-serif;padding:24px\">请扫描 Magpie 文件传输页面中的二维码进入。<br>Scan the QR code shown in Magpie to connect.</p>",
+        )
+            .into_response(),
+    }
+}
+
 #[tauri::command]
 pub fn get_local_ip_addr(app_handle: AppHandle) -> String {
     let server_info = app_handle.state::<ServerInfo>();
@@ -176,20 +273,12 @@ pub fn save_temp_image(app_handle: AppHandle, base64_data: String) -> Result<Str
 
 #[tauri::command]
 pub async fn get_download_url(app_handle: AppHandle, file_path: String) -> Result<String, String> {
-    let port = {
-        let server_info = app_handle.state::<ServerInfo>();
-        let p = server_info.port.load(Ordering::Relaxed);
-        if p == 0 {
-            match toggle_file_server(app_handle.clone(), true, None).await {
-                Ok(p_str) => p_str.parse::<u16>().unwrap_or(0),
-                Err(_) => 0,
-            }
-        } else {
-            p
-        }
-    };
+    // Never start the (unauthenticated, LAN-facing) server implicitly: this is called from an
+    // image's onError, and starting it here also persisted file_server_enabled=true, so a
+    // broken chat image turned the server on for every future launch.
+    let port = app_handle.state::<ServerInfo>().port.load(Ordering::Relaxed);
     if port == 0 {
-        return Err("Failed to start server".to_string());
+        return Err("File server is not running".to_string());
     }
     let shared_state = app_handle.state::<SharedFileState>();
     let token = format!("fallback_{}", uuid::Uuid::new_v4());
@@ -227,7 +316,9 @@ pub async fn toggle_file_server(
     if enabled {
         {
             let handle = SERVER_HANDLE.lock().unwrap();
-            if handle.is_some() {
+            // A server task that exited on its own (listener error) must not count as running,
+            // or it could never be started again without restarting the app.
+            if handle.as_ref().is_some_and(|h| !h.is_finished()) {
                 // Same shape as a fresh start (the port), so callers such as
                 // get_download_url can parse it.
                 let port = app_handle.state::<ServerInfo>().port.load(Ordering::SeqCst);
@@ -347,6 +438,10 @@ pub async fn run_server(listener: tokio::net::TcpListener, app_handle: AppHandle
             get(handlers::handle_file_download_proxy),
         )
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(file_server_access_key(&app_handle)),
+            require_access_key,
+        ))
         .layer(DefaultBodyLimit::max(MAX_CHUNK_BODY_BYTES));
 
     if let Err(e) = axum::serve(listener, app).await {
@@ -549,4 +644,31 @@ pub fn get_file_server_status(app_handle: AppHandle) -> StatusPayload {
 #[tauri::command]
 pub fn get_app_logo(app_handle: AppHandle) -> String {
     get_app_logo_base64(&app_handle)
+}
+
+#[cfg(test)]
+mod access_key_tests {
+    use super::access_decision;
+
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn lan_requests_need_the_key() {
+        // No key: refused.
+        assert_eq!(access_decision("/", None, None, KEY), None);
+        assert_eq!(access_decision("/send_text", None, Some("mgk=wrong"), KEY), None);
+        assert_eq!(access_decision("/", Some("k=0123"), None, KEY), None);
+        // Key in the QR link: allowed, and the cookie gets set.
+        assert_eq!(access_decision("/", Some(&format!("x=1&k={KEY}")), None, KEY), Some(true));
+        // Key in the cookie: allowed.
+        assert_eq!(
+            access_decision("/poll", None, Some(&format!("a=b; mgk={KEY}")), KEY),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn download_links_rely_on_their_own_token() {
+        assert_eq!(access_decision("/download/abc", None, None, KEY), Some(false));
+    }
 }

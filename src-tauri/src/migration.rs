@@ -1,8 +1,17 @@
-use std::fs;
 use std::path::PathBuf;
 
 /// v0.2.8 Rename Migration: 贴汁 -> TieZ
 pub fn perform_migration_v028(default_app_dir: &PathBuf) {
+    // Copy-only and once. The source folder is left alone now: a "贴汁" data folder may just
+    // as well belong to a separate, still-installed copy of the upstream app, and this used to
+    // move it away, then delete its folder, uninstall entry and shortcuts. Without deleting the
+    // source, the marker is what stops the copy (and the "replace a small DB" branch below)
+    // from re-running on every start.
+    let marker = default_app_dir.join(".migrated-v028");
+    if marker.exists() {
+        return;
+    }
+
     // Check multiple possible locations for old data folder
     let mut old_app_dirs_to_check = Vec::new();
 
@@ -48,8 +57,9 @@ pub fn perform_migration_v028(default_app_dir: &PathBuf) {
 
             // 2. Data Migration Logic
             if !default_app_dir.exists() && !success {
-                println!(">>> [MIGRATION] Renaming old data folder '贴汁' to 'TieZ'...");
-                success = std::fs::rename(&old_app_dir, &default_app_dir).is_ok();
+                println!(">>> [MIGRATION] Copying old data folder '贴汁'...");
+                success = std::fs::create_dir_all(default_app_dir).is_ok()
+                    && copy_dir_contents(&old_app_dir, default_app_dir).is_ok();
             } else if old_db.exists() && !new_db.exists() {
                 println!(">>> [MIGRATION] Pulling old data from '贴汁' to 'TieZ'...");
                 let _ = std::fs::create_dir_all(&default_app_dir);
@@ -88,215 +98,8 @@ pub fn perform_migration_v028(default_app_dir: &PathBuf) {
             }
 
             if success {
-                println!(">>> [CLEANUP] Cleaning up residues of old '贴汁' version...");
-                if old_app_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&old_app_dir);
-                }
-                let custom_path = cleanup_old_install_registry();
-                cleanup_old_start_menu();
-                cleanup_old_install_folder(custom_path);
-            }
-        }
-    }
-
-    // No unconditional "clean up on every startup" here any more. The upstream app (TieZ,
-    // still named 贴汁) is a separate product users may have installed alongside; running this
-    // on every start silently deleted its uninstall entry and install folder. The cleanup now
-    // only runs as part of an actual data migration above.
-}
-
-/// v0.2.8 Rename Migration: Registry Cleanup - Returns found install location if any
-pub fn cleanup_old_install_registry() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let path = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
-        let mut found_install_loc = None;
-
-        println!(
-            ">>> [CLEANUP] Scanning registry for old versions at HKCU\\{}",
-            path
-        );
-
-        if let Ok(key) = hkcu.open_subkey_with_flags(path, KEY_READ | KEY_WRITE) {
-            for subkey_name in key.enum_keys().filter_map(|x| x.ok()) {
-                if let Ok(subkey) = key.open_subkey(&subkey_name) {
-                    let name: String = subkey.get_value("DisplayName").unwrap_or_default();
-
-                    if name.contains("贴汁") {
-                        println!(
-                            ">>> [CLEANUP] Found old registry entry: {} ({}).",
-                            subkey_name, name
-                        );
-
-                        // Try to get InstallLocation
-                        if let Ok(loc) = subkey.get_value::<String, _>("InstallLocation") {
-                            if !loc.is_empty() {
-                                println!(
-                                    ">>> [CLEANUP] Found InstallLocation in registry: {}",
-                                    loc
-                                );
-                                found_install_loc = Some(PathBuf::from(loc));
-                            }
-                        }
-                        // Fallback: Try to parse from UninstallString "C:\path\to\uninstall.exe"
-                        if found_install_loc.is_none() {
-                            if let Ok(uninstall_str) =
-                                subkey.get_value::<String, _>("UninstallString")
-                            {
-                                println!(">>> [CLEANUP] Found UninstallString: {}", uninstall_str);
-                                // Simple heuristic: remove quotes and find parent of executable
-                                let clean_str = uninstall_str.replace("\"", "");
-                                let p = std::path::Path::new(&clean_str);
-                                if let Some(parent) = p.parent() {
-                                    println!(">>> [CLEANUP] inferred install path from uninstaller: {:?}", parent);
-                                    found_install_loc = Some(parent.to_path_buf());
-                                }
-                            }
-                        }
-
-                        println!(">>> [CLEANUP] Deleting registry key...");
-                        if let Err(e) = key.delete_subkey_all(&subkey_name) {
-                            println!(">>> [CLEANUP ERROR] Failed to delete registry key: {}", e);
-                        } else {
-                            println!(">>> [CLEANUP] Registry entry deleted.");
-                        }
-                    }
-                }
-            }
-        }
-        return found_install_loc;
-    }
-    #[cfg(not(windows))]
-    None
-}
-
-/// v0.2.8 Rename Migration: Start Menu & Desktop Cleanup
-pub fn cleanup_old_start_menu() {
-    #[cfg(windows)]
-    {
-        if let Ok(app_data) = std::env::var("APPDATA") {
-            let start_menu =
-                std::path::Path::new(&app_data).join("Microsoft\\Windows\\Start Menu\\Programs");
-            println!(">>> [CLEANUP] Checking Start Menu at: {:?}", start_menu);
-
-            // Delete old shortcut
-            let old_lnk = start_menu.join("贴汁.lnk");
-            if old_lnk.exists() {
-                println!(
-                    ">>> [CLEANUP] Deleting old start menu shortcut: {:?}",
-                    old_lnk
-                );
-                let _ = fs::remove_file(old_lnk);
-            }
-
-            // Delete old start menu folder
-            let old_folder = start_menu.join("贴汁");
-            if old_folder.exists() && old_folder.is_dir() {
-                println!(
-                    ">>> [CLEANUP] Deleting old start menu folder: {:?}",
-                    old_folder
-                );
-                let _ = fs::remove_dir_all(old_folder);
-            }
-        }
-
-        // Desktop Cleanup
-        if let Ok(user_profile) = std::env::var("USERPROFILE") {
-            let desktop = std::path::Path::new(&user_profile).join("Desktop");
-            let old_desktop_lnk = desktop.join("贴汁.lnk");
-            println!(
-                ">>> [CLEANUP] Checking Desktop shortcut at: {:?}",
-                old_desktop_lnk
-            );
-            if old_desktop_lnk.exists() {
-                println!(
-                    ">>> [CLEANUP] Deleting old desktop shortcut: {:?}",
-                    old_desktop_lnk
-                );
-                let _ = fs::remove_file(old_desktop_lnk);
-            }
-        }
-    }
-}
-
-/// Only a folder literally named after the legacy app may be removed recursively.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn is_legacy_install_dir_name(path: &std::path::Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.contains("贴汁"))
-        .unwrap_or(false)
-}
-
-/// v0.2.8 Rename Migration: Clean up old installation directory
-pub fn cleanup_old_install_folder(custom_path: Option<PathBuf>) {
-    #[cfg(windows)]
-    {
-        // Try to find and delete old installation folder
-        // Common installation paths
-        let mut possible_paths = vec![
-            std::env::var("LOCALAPPDATA")
-                .ok()
-                .map(|p| PathBuf::from(p).join("Programs").join("贴汁")),
-            std::env::var("ProgramFiles")
-                .ok()
-                .map(|p| PathBuf::from(p).join("贴汁")),
-            std::env::var("ProgramFiles(x86)")
-                .ok()
-                .map(|p| PathBuf::from(p).join("贴汁")),
-            // Also check direct local appdata just in case
-            std::env::var("LOCALAPPDATA")
-                .ok()
-                .map(|p| PathBuf::from(p).join("贴汁")),
-        ];
-
-        // Add custom path from registry if found
-        if let Some(path) = custom_path {
-            println!(
-                ">>> [CLEANUP] Adding custom path from registry to cleanup list: {:?}",
-                path
-            );
-            possible_paths.push(Some(path));
-        }
-
-        for path_opt in possible_paths.iter() {
-            if let Some(path) = path_opt {
-                println!(">>> [CLEANUP] Checking installation path: {:?}", path);
-                // The registry path is whatever folder the user installed into, e.g. `D:\Apps`.
-                // Never recursively delete a folder that is not itself the legacy app folder.
-                if !is_legacy_install_dir_name(path) {
-                    println!(">>> [CLEANUP] Skipping non-legacy folder: {:?}", path);
-                    continue;
-                }
-                if path.exists() && path.is_dir() {
-                    // Safety check: Don't delete if it's the current running dir (unlikely due to rename, but good practice)
-                    if let Ok(current_exe) = std::env::current_exe() {
-                        if let Some(current_dir) = current_exe.parent() {
-                            if path == current_dir {
-                                println!(
-                                    ">>> [CLEANUP] Skipping current directory safety check: {:?}",
-                                    path
-                                );
-                                continue;
-                            }
-                        }
-                    }
-
-                    println!(">>> [CLEANUP] Found old installation folder: {:?}", path);
-                    // Try to delete - this might fail if files are in use
-                    match fs::remove_dir_all(path) {
-                        Ok(_) => {
-                            println!(">>> [CLEANUP] Successfully deleted old installation folder")
-                        }
-                        Err(e) => println!(
-                            ">>> [CLEANUP] Could not delete old installation folder: {}",
-                            e
-                        ),
-                    }
-                }
+                let _ = std::fs::write(&marker, b"migrated-from-tiezhi");
+                return;
             }
         }
     }
@@ -958,20 +761,5 @@ mod migration_log_and_tmp_tests {
             "app.magpie.tmp",
             "tmp 目录名应为 <目标名>.tmp"
         );
-    }
-}
-
-#[cfg(test)]
-mod legacy_cleanup_guard_tests {
-    use super::is_legacy_install_dir_name;
-    use std::path::Path;
-
-    #[test]
-    fn only_the_legacy_app_folder_is_eligible_for_recursive_delete() {
-        assert!(is_legacy_install_dir_name(Path::new(r"C:\Program Files\贴汁")));
-        assert!(is_legacy_install_dir_name(Path::new(r"D:\Apps\贴汁")));
-        // A parent folder recorded as InstallLocation must never be wiped.
-        assert!(!is_legacy_install_dir_name(Path::new(r"D:\Apps")));
-        assert!(!is_legacy_install_dir_name(Path::new(r"D:\")));
     }
 }

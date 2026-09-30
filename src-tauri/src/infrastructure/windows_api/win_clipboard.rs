@@ -1152,6 +1152,10 @@ unsafe fn write_gif_temp_file(gif_data: Option<&[u8]>) -> Option<String> {
                 .to_str()
                 .map(|n| n.starts_with("Magpie_GIF_") && n.ends_with(".gif"))
                 .unwrap_or(false);
+            // Name first: stat only our own files, not every entry in %TEMP%.
+            if !is_ours {
+                continue;
+            }
             let is_stale = entry
                 .metadata()
                 .and_then(|m| m.modified())
@@ -1159,7 +1163,7 @@ unsafe fn write_gif_temp_file(gif_data: Option<&[u8]>) -> Option<String> {
                 .and_then(|t| t.elapsed().ok())
                 .map(|age| age > cutoff)
                 .unwrap_or(false);
-            if is_ours && is_stale {
+            if is_stale {
                 let _ = std::fs::remove_file(entry.path());
             }
         }

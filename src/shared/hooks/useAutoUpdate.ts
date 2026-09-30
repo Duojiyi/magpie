@@ -32,6 +32,8 @@ export const classifyUpdateError = (raw: string): UpdateErrorKey => {
 // 启动后多久触发首次自动检查更新（毫秒）
 const STARTUP_CHECK_DELAY_MS = 5000;
 
+const PORTABLE_RELEASES_URL = "https://github.com/Duojiyi/magpie/releases/latest";
+
 export const useAutoUpdate = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [status, setStatus] = useState<UpdateStatus>("idle");
@@ -78,6 +80,20 @@ export const useAutoUpdate = () => {
 
   const startUpdate = async () => {
     if (!updateObj) return;
+
+    // Portable build: downloadAndInstall runs the NSIS/MSI installer, which installs a
+    // separate copy using %APPDATA% (the portable history seems gone) while the portable exe
+    // stays old. Send the user to the release page to grab the new portable zip instead.
+    const portable = await invoke<boolean>("is_portable_mode").catch(() => false);
+    if (portable) {
+      setIsOpen(false);
+      invoke("open_content", {
+        id: 0,
+        content: PORTABLE_RELEASES_URL,
+        contentType: "url"
+      }).catch(console.error);
+      return;
+    }
 
     try {
       setStatus("downloading");

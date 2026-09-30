@@ -187,20 +187,50 @@ async fn handle_url_content(
     }
 }
 
-/// Schemes a history/chat link may be handed to the OS default handler with. Anything else
-/// (file:, UNC-ish, ms-* protocol handlers…) is refused: links can come from any copied text
-/// and from unauthenticated LAN chat peers.
-fn is_openable_url(content: &str) -> bool {
+/// Normalize a history/chat link for the OS default handler, or refuse it. Links come from
+/// any copied text and from unauthenticated LAN chat peers, so schemes whose handlers read
+/// or run local content (file:, UNC paths, ms-* protocol handlers, script URLs, search-ms…)
+/// are refused. Web links and ordinary app deep links (vscode://, obsidian://, zoommtg://…)
+/// pass. A bare `www.` host, which capture already classifies as a URL, gets `https://`.
+fn openable_url(content: &str) -> Option<String> {
     let trimmed = content.trim();
-    let Some((scheme, rest)) = trimmed.split_once(':') else {
-        return false;
-    };
-    !rest.is_empty()
-        && !trimmed.chars().any(|c| c.is_control())
-        && matches!(
-            scheme.to_ascii_lowercase().as_str(),
-            "http" | "https" | "mailto" | "ftp" | "ftps"
-        )
+    if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+        return None;
+    }
+    // `get` rather than slicing: the text may start with a multi-byte character.
+    if trimmed.len() > 4
+        && trimmed
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("www."))
+    {
+        return Some(format!("https://{trimmed}"));
+    }
+    let (scheme, rest) = trimmed.split_once(':')?;
+    let scheme = scheme.to_ascii_lowercase();
+    let well_formed = !scheme.is_empty()
+        && scheme.len() > 1 // "C:\..." is a drive letter, not a scheme
+        && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !well_formed || rest.is_empty() {
+        return None;
+    }
+    let refused = scheme.starts_with("ms-")
+        || matches!(
+            scheme.as_str(),
+            "file" | "javascript" | "vbscript" | "data" | "jar" | "shell" | "search"
+                | "search-ms" | "res" | "mk" | "its" | "hcp" | "help" | "microsoft-edge"
+                | "cmd" | "powershell" | "about" | "view-source"
+        );
+    if refused {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 async fn launch_default_handler(app: &tauri::AppHandle, content: &str) -> Result<(), AppError> {
@@ -208,14 +238,14 @@ async fn launch_default_handler(app: &tauri::AppHandle, content: &str) -> Result
     // URL ran arbitrary commands (and ordinary `?a=1&b=2` links were cut at the `&`). The
     // opener plugin hands the URL to ShellExecute / `open` / `xdg-open` as a single argument;
     // it also fixes Linux, where the `open` binary used here before is not the opener.
-    if !is_openable_url(content) {
+    let Some(url) = openable_url(content) else {
         return Err(AppError::Validation(format!(
-            "不支持打开此类链接: {}",
+            "Refusing to open this link: {}",
             content.chars().take(80).collect::<String>()
         )));
-    }
+    };
     tauri_plugin_opener::OpenerExt::opener(app)
-        .open_url(content.trim(), None::<&str>)
+        .open_url(url, None::<&str>)
         .map_err(|e| AppError::Internal(format!("启动默认浏览器失败: {}", e)))
 }
 
@@ -569,5 +599,37 @@ fn update_database_with_changes(
             println!("Database updated for id: {}", id);
             crate::services::cloud_sync::request_cloud_sync(app_handle.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod openable_url_tests {
+    use super::openable_url;
+
+    #[test]
+    fn web_links_and_app_deep_links_open() {
+        assert_eq!(openable_url(" https://a.b/x?a=1&b=2 ").as_deref(), Some("https://a.b/x?a=1&b=2"));
+        assert_eq!(openable_url("www.example.com").as_deref(), Some("https://www.example.com"));
+        assert!(openable_url("mailto:someone@example.com").is_some());
+        assert!(openable_url("obsidian://open?vault=x").is_some());
+        assert!(openable_url("vscode://file/c:/x").is_some());
+    }
+
+    #[test]
+    fn local_and_handler_abuse_schemes_are_refused() {
+        for bad in [
+            "file:///C:/Windows/System32/calc.exe",
+            r"\\evil.host\share\x.exe",
+            "ms-msdt:/id PCWDiagnostic",
+            "search-ms:query=x",
+            "javascript:alert(1)",
+            r"C:\Windows\notepad.exe",
+            "https://a.b/\u{0007}",
+            "",
+        ] {
+            assert!(openable_url(bad).is_none(), "should refuse {bad:?}");
+        }
+        // Must not panic on a multi-byte first character.
+        assert!(openable_url("中文链接").is_none());
     }
 }

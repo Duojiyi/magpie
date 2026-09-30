@@ -155,16 +155,25 @@ pub async fn remove_emoji_favorite(app_data: State<'_, AppDataDir>, path: String
     }
 
     let data_dir = app_data.0.lock().unwrap().clone();
-    let favorites_dir = data_dir.join("emoji_favorites");
-    let favorites_dir = favorites_dir.canonicalize().unwrap_or(favorites_dir);
+    // Both managed emoji folders. `emojis/user` (right-click "add to emoji") used to be left
+    // out, so the file survived and the panel re-listed it straight after every delete.
+    let allowed_dirs: Vec<std::path::PathBuf> = [
+        data_dir.join("emoji_favorites"),
+        data_dir.join("emojis").join("user"),
+    ]
+    .into_iter()
+    .map(|dir| dir.canonicalize().unwrap_or(dir))
+    .collect();
 
+    // Only an existing file that canonicalizes into one of the folders is removed, which
+    // also rules out `..` traversal.
     let target_path = std::path::PathBuf::from(&path);
     if let Ok(target_canonical) = target_path.canonicalize() {
-        if target_canonical.starts_with(&favorites_dir) && target_canonical.is_file() {
+        if target_canonical.is_file()
+            && allowed_dirs.iter().any(|dir| target_canonical.starts_with(dir))
+        {
             let _ = std::fs::remove_file(target_canonical);
         }
-    } else if target_path.starts_with(&favorites_dir) && target_path.is_file() {
-        let _ = std::fs::remove_file(target_path);
     }
 
     Ok(())
@@ -258,10 +267,28 @@ pub(crate) async fn save_emoji_favorite_url_to_dir(
         .to_string();
     let mime = mime.split(';').next().unwrap_or("").trim().to_string();
 
-    let bytes = response
-        .bytes()
+    // Any dropped link lands here, not only images: read with a hard cap instead of buffering
+    // a whole ISO/video into memory (an allocation failure aborts the app in release).
+    const MAX_EMOJI_DOWNLOAD_BYTES: usize = 20 * 1024 * 1024;
+    let too_large = || AppError::Validation("image is too large (max 20 MiB)".to_string());
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_EMOJI_DOWNLOAD_BYTES as u64)
+    {
+        return Err(too_large());
+    }
+    let mut response = response;
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(e.to_string()))?
+    {
+        if bytes.len() + chunk.len() > MAX_EMOJI_DOWNLOAD_BYTES {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
 
     if bytes.is_empty() {
         return Err(AppError::Validation("empty image response".to_string()));
