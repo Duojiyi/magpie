@@ -577,6 +577,8 @@ pub fn append_message(
         let trimmed: Vec<Message> = msgs.drain(..excess).collect();
         if let Ok(mut map) = app.state::<SharedFileState>().0.lock() {
             for old in &trimmed {
+                // poll_messages tokenizes legacy image messages on the fly under this token.
+                map.remove(&stable_poll_token(old.id));
                 if let Some(token) = old
                     .content
                     .strip_prefix("/download/")
@@ -671,10 +673,8 @@ pub async fn register_received_file(
             entry_mem.id = id;
             if let Ok(mut session) = session_hist.0.lock() {
                 session.push_back(entry_mem);
-                if session.len() > 500 {
-                    if let Some(removed) = session.pop_front() {
-                        let _ = app_handle.emit("clipboard-removed", removed.id);
-                    }
+                for removed in crate::app_state::trim_session_history(&mut session) {
+                    let _ = app_handle.emit("clipboard-removed", removed);
                 }
             }
             let _ = app_handle.emit("clipboard-changed", id);

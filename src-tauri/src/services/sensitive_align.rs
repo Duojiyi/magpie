@@ -10,6 +10,8 @@ use crate::infrastructure::repository::settings_repo::SettingsRepository;
 /// Bumped when the set of sensitive tags changes (v2 added password), so rows tagged under
 /// the new rule are re-aligned once.
 const SENSITIVE_ALIGNMENT_DONE_KEY: &str = "db.sensitive_alignment_done_v2";
+/// DPAPI rows left after the last reseal pass (ones this machine cannot decrypt).
+const DPAPI_UNRESEALABLE_KEY: &str = "db.dpapi_unresealable_rows";
 
 pub fn spawn_sensitive_alignment(app_handle: AppHandle) {
     thread::spawn(move || run_alignment(app_handle, false));
@@ -30,22 +32,34 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
     // The DPAPI re-seal (Windows portable, see encryption::needs_portable_reseal) is not tied
     // to the one-time flag: it must run whenever DPAPI rows are still there, e.g. on the first
     // start after upgrading an install whose alignment finished long ago.
-    let pending_dpapi_reseal = encryption::needs_portable_reseal(encryption::ENCRYPT_PREFIX)
-        && db_state
+    // Rows this machine cannot decrypt (DPAPI of another PC/account) stay as they are, so the
+    // count left after a pass is remembered: an unchanged count means nothing new to reseal,
+    // and the full scan is not repeated on every start.
+    let count_dpapi_rows = || {
+        db_state
             .conn
             .lock()
             .ok()
             .and_then(|conn| {
                 conn.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM clipboard_history
+                    "SELECT COUNT(*) FROM clipboard_history
                      WHERE content LIKE 'dpapi:%' OR preview LIKE 'dpapi:%'
-                        OR html_content LIKE 'dpapi:%')",
+                        OR html_content LIKE 'dpapi:%'",
                     [],
-                    |row| row.get::<_, bool>(0),
+                    |row| row.get::<_, i64>(0),
                 )
                 .ok()
             })
-            .unwrap_or(false);
+            .unwrap_or(0)
+    };
+    let reseal_enabled = encryption::needs_portable_reseal(encryption::ENCRYPT_PREFIX);
+    let dpapi_rows = if reseal_enabled { count_dpapi_rows() } else { 0 };
+    let stuck_rows = db_state
+        .settings_repo
+        .get(DPAPI_UNRESEALABLE_KEY)
+        .unwrap_or(None)
+        .and_then(|v| v.parse::<i64>().ok());
+    let pending_dpapi_reseal = dpapi_rows > 0 && stuck_rows != Some(dpapi_rows);
     if done == "true" && !force && !pending_dpapi_reseal {
         return;
     }
@@ -190,4 +204,9 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
     let _ = db_state
         .settings_repo
         .set(SENSITIVE_ALIGNMENT_DONE_KEY, "true");
+    if reseal_enabled {
+        let _ = db_state
+            .settings_repo
+            .set(DPAPI_UNRESEALABLE_KEY, &count_dpapi_rows().to_string());
+    }
 }

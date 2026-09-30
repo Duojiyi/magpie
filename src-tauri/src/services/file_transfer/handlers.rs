@@ -619,7 +619,13 @@ pub async fn upload_chunk(
     }
 
     if let Ok(mut file) = options.open(&temp_path).await {
-        if let Err(e) = file.write_all(&data).await {
+        // Flush before replying: tokio's File finishes writes in the background, and the next
+        // chunk's offset check (and the finalize rename) must see these bytes on disk.
+        let written = match file.write_all(&data).await {
+            Ok(()) => file.flush().await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = written {
             eprintln!("Error writing chunk: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Write failed").into_response();
         }
