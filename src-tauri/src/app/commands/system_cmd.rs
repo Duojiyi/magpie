@@ -729,7 +729,7 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
 
     // The connection lock is held for the whole move and commit: the WAL is flushed into
     // clipboard.db, and no capture can write into the old database (or its attachments)
-    // after the copy was taken. The frontend relaunches right after this returns.
+    // after the copy was taken. On success, capture is paused until the relaunch.
     let db_state = app_handle.try_state::<crate::database::DbState>();
     // Recover from a poisoned lock instead of skipping the flush (a skipped checkpoint is
     // exactly the data loss this guards against).
@@ -828,12 +828,50 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
     }
 
     // 3. Committed: drop the old copies of the data folders (best effort). The old database
-    // files stay, see 1.1.
+    // cannot be removed while this process has it open, so it is recorded and removed by the
+    // next start (see cleanup_previous_data_dir).
     for dir in &plan.old_folders {
         let _ = std::fs::remove_dir_all(dir);
     }
+    if let Ok(config_dir) = app_handle.path().app_data_dir() {
+        let _ = std::fs::write(
+            config_dir.join(PREVIOUS_DATA_DIR_FILE),
+            old_path_buf.to_string_lossy().as_bytes(),
+        );
+    }
+
+    // The UI shows a confirmation before it relaunches. Anything captured until then would
+    // go into the old database, which the relaunch leaves behind; stop capturing now.
+    crate::CLIPBOARD_MONITOR_PAUSED.store(true, std::sync::atomic::Ordering::SeqCst);
 
     Ok(())
+}
+
+/// Records the data folder a successful `set_data_path` moved away from.
+pub const PREVIOUS_DATA_DIR_FILE: &str = "previous_data_dir.txt";
+
+/// Called at startup, before the database is opened: removes the stale database (and its key
+/// file, if the current folder has the same key) left in the folder a previous
+/// `set_data_path` moved away from. Only the files Magpie itself put there are touched.
+pub fn cleanup_previous_data_dir(config_dir: &std::path::Path, current_data_dir: &std::path::Path) {
+    let marker = config_dir.join(PREVIOUS_DATA_DIR_FILE);
+    let Ok(previous) = std::fs::read_to_string(&marker) else {
+        return;
+    };
+    let previous = std::path::PathBuf::from(previous.trim());
+    if !previous.as_os_str().is_empty() && previous != current_data_dir {
+        for name in ["clipboard.db", "clipboard.db-wal", "clipboard.db-shm"] {
+            let _ = std::fs::remove_file(previous.join(name));
+        }
+        let old_key = previous.join("local.key");
+        let same_key = std::fs::read(&old_key).ok().is_some_and(|old| {
+            std::fs::read(current_data_dir.join("local.key")).ok().as_deref() == Some(old.as_slice())
+        });
+        if same_key {
+            let _ = std::fs::remove_file(old_key);
+        }
+    }
+    let _ = std::fs::remove_file(marker);
 }
 
 /// What `set_data_path` changed so far, so a failure can put everything back.

@@ -190,8 +190,26 @@ pub fn init_portable_key_dir(dir: std::path::PathBuf) {
         .ok()
         .and_then(|exe| exe.parent().map(|exe_dir| exe_dir.join("data")))
         .is_some_and(|portable| portable == dir);
-    if is_portable_data_dir {
+    // A folder that already carries a key file holds key-file ciphertext (a portable data
+    // folder opened by an installed copy, or moved with set_data_path, which takes the key
+    // along); without the key those values would all read as unreadable.
+    if is_portable_data_dir || dir.join("local.key").is_file() {
         let _ = PORTABLE_KEY_DIR.set(dir);
+    }
+}
+
+/// True for a value sealed with DPAPI while this install uses the key-file scheme: it only
+/// opens on the PC and Windows account that wrote it, so it should be re-sealed (Windows
+/// portable data moving to another PC). Always false elsewhere.
+pub fn needs_portable_reseal(value: &str) -> bool {
+    #[cfg(windows)]
+    {
+        PORTABLE_KEY_DIR.get().is_some() && value.starts_with(ENCRYPT_PREFIX)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = value;
+        false
     }
 }
 
@@ -271,7 +289,11 @@ fn portable_key() -> Option<[u8; 32]> {
         }
         #[cfg(not(unix))]
         {
-            if std::fs::write(&path, key).is_err() {
+            // Temp file + rename: a crash mid-write must not leave a short key file, which is
+            // (deliberately) never overwritten and would disable at-rest encryption for good.
+            let tmp = dir.join("local.key.tmp");
+            if std::fs::write(&tmp, key).is_err() || std::fs::rename(&tmp, &path).is_err() {
+                let _ = std::fs::remove_file(&tmp);
                 return None;
             }
         }

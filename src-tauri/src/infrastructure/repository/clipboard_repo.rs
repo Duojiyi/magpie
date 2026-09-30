@@ -123,6 +123,42 @@ impl SqliteClipboardRepository {
         Self { conn }
     }
 
+    /// Re-seal a sensitive row's `dpapi:` fields with the current at-rest scheme (the key
+    /// file on Windows portable). All-or-nothing: if any field does not decrypt here (DPAPI
+    /// from another PC/account), the row is left exactly as it is.
+    pub fn reseal_entry_with_conn(&self, conn: &Connection, id: i64) -> Result<(), String> {
+        let (content_raw, preview_raw, html_raw): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT content, preview, html_content FROM clipboard_history WHERE id = ?",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2).ok())),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let reseal = |value: &str| -> Option<String> {
+            if !encryption::needs_portable_reseal(value) {
+                return Some(value.to_string());
+            }
+            let plain = encryption::decrypt_value(value)?;
+            encryption::encrypt_value(&plain)
+        };
+        let (Some(content), Some(preview)) = (reseal(&content_raw), reseal(&preview_raw)) else {
+            return Ok(());
+        };
+        let html = match html_raw.as_deref().map(reseal) {
+            Some(None) => return Ok(()),
+            Some(Some(h)) => Some(h),
+            None => None,
+        };
+
+        conn.execute(
+            "UPDATE clipboard_history SET content = ?, preview = ?, html_content = ? WHERE id = ?",
+            params![content, preview, html, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn encrypt_entry_with_conn(&self, conn: &Connection, id: i64) -> Result<(), String> {
         let (content_raw, preview_raw, html_raw, content_type, content_hash): (String, String, Option<String>, String, i64) =
             conn.query_row(

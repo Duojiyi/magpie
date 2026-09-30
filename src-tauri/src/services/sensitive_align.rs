@@ -42,6 +42,7 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
     // 加密前缀用于在 SQL 内直接判断各字段是否已加密，避免把完整内容读进内存。
     // 两种方案都要匹配：Windows 用 DPAPI，其它平台用可移植方案；只认其中一种会让另一平台上
     // 已加密的行被判定为「未加密」，从而被反复重写。
+    let reseal_dpapi = encryption::needs_portable_reseal(encryption::ENCRYPT_PREFIX);
     let enc_like = format!("{}%", encryption::ENCRYPTED_PREFIXES[0]);
     let enc_like_alt = format!("{}%", encryption::ENCRYPTED_PREFIXES[1]);
 
@@ -70,7 +71,9 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
                         SELECT 1 FROM entry_tags se
                         WHERE se.entry_id = ch.id
                           AND se.tag COLLATE NOCASE IN {}
-                    ) AS is_sensitive
+                    ) AS is_sensitive,
+                    COALESCE(ch.content LIKE 'dpapi:%' OR ch.preview LIKE 'dpapi:%'
+                             OR ch.html_content LIKE 'dpapi:%', 0) AS has_dpapi
              FROM clipboard_history ch
              WHERE (ch.timestamp < ?1) OR (ch.timestamp = ?1 AND ch.id < ?2)
              ORDER BY ch.timestamp DESC, ch.id DESC
@@ -79,7 +82,7 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
         );
 
         // 每批仅保留定长标量元组，单批内存上限固定为 batch_size 条 × 几个整型，处理后即被释放
-        let mut batch: Vec<(i64, i64, bool, bool, bool, bool, bool)> = Vec::new();
+        let mut batch: Vec<(i64, i64, bool, bool, bool, bool, bool, bool)> = Vec::new();
         {
             let mut stmt = match conn_guard.prepare(&sql) {
                 Ok(s) => s,
@@ -96,6 +99,7 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
                     let has_html: bool = row.get(4)?;
                     let html_encrypted: bool = row.get(5)?;
                     let is_sensitive: i32 = row.get(6)?;
+                    let has_dpapi: bool = row.get(7)?;
                     Ok((
                         id,
                         ts,
@@ -104,6 +108,7 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
                         has_html,
                         html_encrypted,
                         is_sensitive == 1,
+                        has_dpapi,
                     ))
                 },
             ) {
@@ -122,10 +127,22 @@ fn run_alignment(app_handle: AppHandle, force: bool) {
             break;
         }
 
-        for (id, _ts, content_encrypted, preview_encrypted, has_html, html_encrypted, is_sensitive) in
-            batch.iter()
+        for (
+            id,
+            _ts,
+            content_encrypted,
+            preview_encrypted,
+            has_html,
+            html_encrypted,
+            is_sensitive,
+            has_dpapi,
+        ) in batch.iter()
         {
-            if *is_sensitive
+            if *is_sensitive && *has_dpapi && reseal_dpapi {
+                // Windows portable: DPAPI only opens on this PC/account. Decrypt and re-seal
+                // with the key file that travels with the data folder.
+                let _ = db_state.repo.reseal_entry_with_conn(&conn_guard, *id);
+            } else if *is_sensitive
                 && (!content_encrypted || !preview_encrypted || (*has_html && !html_encrypted))
             {
                 // 敏感但未完全加密：补加密

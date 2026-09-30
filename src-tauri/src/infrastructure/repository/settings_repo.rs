@@ -168,7 +168,10 @@ impl SettingsRepository for SqliteSettingsRepository {
             // encrypts it: every read rewrote the row. mqtt_username stays a sensitive key.)
             #[cfg(not(feature = "portable"))]
             {
-                if is_sensitive_key(key) && !encryption::is_encrypted_payload(&value) {
+                // Also re-seal a DPAPI value into the key-file scheme (Windows portable), but
+                // only once it actually decrypted: an unreadable secret must stay untouched.
+                let reseal = encryption::needs_portable_reseal(&value) && !decrypted.is_empty();
+                if is_sensitive_key(key) && (!encryption::is_encrypted_payload(&value) || reseal) {
                     let _ = conn.execute(
                         "UPDATE settings SET value = ? WHERE key = ?",
                         params![self.maybe_encrypt(key, &decrypted), key],
@@ -227,7 +230,8 @@ impl SettingsRepository for SqliteSettingsRepository {
             // Auto-migrate to encrypted if it was plaintext and is sensitive (see get()).
             #[cfg(not(feature = "portable"))]
             {
-                if is_sensitive_key(&key) && !encryption::is_encrypted_payload(&value) {
+                let reseal = encryption::needs_portable_reseal(&value) && !decrypted.is_empty();
+                if is_sensitive_key(&key) && (!encryption::is_encrypted_payload(&value) || reseal) {
                     let _ = conn.execute(
                         "UPDATE settings SET value = ? WHERE key = ?",
                         params![self.maybe_encrypt(&key, &decrypted), &key],

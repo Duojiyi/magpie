@@ -34,10 +34,17 @@ jobs:
       - name: verify tag matches app version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
+        env:
+          # Via env, not interpolated into the script: ref names may contain `$(`.
+          TAG: ${{ github.ref_name }}
         run: |
-          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          if ("v$version" -ne "${{ github.ref_name }}") {
-            throw "Tag ${{ github.ref_name }} does not match tauri.conf.json version $version"
+          $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $npm = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          foreach ($pair in @(@('tauri.conf.json', $tauri), @('package.json', $npm), @('Cargo.toml', $cargo))) {
+            if ("v$($pair[1])" -ne $env:TAG) {
+              throw "Tag $env:TAG does not match $($pair[0]) version $($pair[1])"
+            }
           }
 
       # Tauri v2 needs webkit2gtk 4.1; appindicator backs the tray and the xcb headers back
@@ -67,8 +74,10 @@ jobs:
       - name: extract release notes from CHANGELOG
         id: changelog
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:TAG
           $version = $tag.TrimStart('v')
           if (-not (Test-Path CHANGELOG.md)) {
             "See CHANGELOG.md for details." | Out-File -FilePath release_notes.md -Encoding utf8 -NoNewline
@@ -93,7 +102,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
+          # Manual runs use their own tag so their draft can never be picked up (and left
+          # unpublished) by the real tag run of the same version.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && 'v__VERSION__' || 'draft-v__VERSION__' }}
           releaseName: "Magpie v__VERSION__"
           releaseBody: ${{ github.event.head_commit.message }}
           # A manual run (workflow_dispatch, possibly from any branch) only produces a draft, so
@@ -108,8 +119,9 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:TAG
           $body = Get-Content release_notes.md -Raw
           gh release edit "$tag" --notes "$body" --repo $env:GITHUB_REPOSITORY
 

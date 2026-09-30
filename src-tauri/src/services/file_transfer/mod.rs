@@ -42,10 +42,15 @@ pub fn file_server_access_key(app: &AppHandle) -> String {
     // new key for the QR while the server still enforces the old one.
     static CACHED: Mutex<Option<String>> = Mutex::new(None);
     let mut cached = CACHED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let db = app.state::<DbState>();
     if let Some(key) = cached.as_ref() {
+        // Put it back if the setting was cleared meanwhile, so the next start keeps the key
+        // (and phones keep their bookmark) instead of minting a new one.
+        if !matches!(db.settings_repo.get(ACCESS_KEY_SETTING), Ok(Some(ref stored)) if stored == key) {
+            let _ = db.settings_repo.set(ACCESS_KEY_SETTING, key);
+        }
         return key.clone();
     }
-    let db = app.state::<DbState>();
     let key = match db.settings_repo.get(ACCESS_KEY_SETTING) {
         Ok(Some(key)) if key.len() >= 32 && key.chars().all(|c| c.is_ascii_hexdigit()) => key,
         _ => {

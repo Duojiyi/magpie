@@ -60,6 +60,9 @@ pub fn get_clipboard_history(
         // be added to the first page only while the offset advanced by database rows alone,
         // so with persistence off (all rows in the session) the list never got past page one.
         // Merge the database prefix with the session items and page through the result.
+        // ponytail: re-reads the DB prefix on every page (quadratic over a long scroll) while
+        // session items exist; the session holds at most a few hundred items, so fine for
+        // now. Upgrade path: a keyset cursor (pinned, order, timestamp, id) instead of offset.
         let (offset_u, limit_u) = (offset.max(0) as usize, limit.max(0) as usize);
         let mut merged = state.repo.get_history(
             offset.max(0).saturating_add(limit.max(0)),

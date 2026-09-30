@@ -105,18 +105,37 @@ fn is_private_image_host(url: &str) -> bool {
     };
     // IPv6 literals come back bracketed from host_str().
     match host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => {
-            ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
-        }
+        Ok(std::net::IpAddr::V4(ip)) => is_private_ipv4(ip),
         Ok(std::net::IpAddr::V6(ip)) => {
             let first = ip.segments()[0];
-            ip.is_loopback()
+            ip.to_ipv4_mapped().is_some_and(is_private_ipv4)
+                || ip.is_loopback()
                 || ip.is_unspecified()
                 || (first & 0xfe00) == 0xfc00 // unique local
                 || (first & 0xffc0) == 0xfe80 // link local
         }
-        Err(_) => host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local"),
+        // Dotless names (`http://router/`) and the usual local suffixes are intranet hosts.
+        // ponytail: names that merely resolve to a private address still pass; closing that
+        // needs a filtering DNS resolver.
+        Err(_) => {
+            !host.contains('.')
+                || host.ends_with(".localhost")
+                || host.ends_with(".local")
+                || host.ends_with(".lan")
+                || host.ends_with(".home.arpa")
+                || host.ends_with(".internal")
+        }
     }
+}
+
+fn is_private_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || (a == 100 && (64..=127).contains(&b)) // carrier-grade NAT, 100.64.0.0/10
 }
 
 /// Remote image fetches are blocking and run on the clipboard listener thread; a copy with
@@ -150,7 +169,17 @@ fn fetch_remote_image(url: &str) -> Option<(Vec<u8>, &'static str)> {
     let client = REMOTE_IMG_CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(REMOTE_IMAGE_TIMEOUT_SECS))
-            .redirect(reqwest::redirect::Policy::limited(8))
+            // Every hop is checked, not only the first URL: a public page redirecting to a
+            // LAN address would otherwise get past is_private_image_host.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 8 {
+                    attempt.error("too many redirects")
+                } else if is_private_image_host(attempt.url().as_str()) {
+                    attempt.stop()
+                } else {
+                    attempt.follow()
+                }
+            }))
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new())
     });
@@ -1437,6 +1466,9 @@ mod tests {
             "http://[::1]/x.png",
             "http://localhost:8080/x.png",
             "http://printer.local/x.png",
+            "http://router/x.png",
+            "http://[::ffff:127.0.0.1]/x.png",
+            "http://100.64.1.1/x.png",
             "not a url",
         ] {
             assert!(is_private_image_host(url), "{url}");

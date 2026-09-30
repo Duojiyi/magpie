@@ -65,6 +65,9 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Data Directory & Migration
     let app_dir = resolve_data_dir(app)?;
+    if let Ok(config_dir) = app.path().app_data_dir() {
+        crate::app::commands::system_cmd::cleanup_previous_data_dir(&config_dir, &app_dir);
+    }
 
     // 2. Logger Initialization
     crate::logger::init(app_dir.join("tiez.log"));
