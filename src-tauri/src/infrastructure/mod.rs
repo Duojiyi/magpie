@@ -56,6 +56,11 @@ pub mod windows_api {
         pub unsafe fn get_clipboard_files() -> Option<Vec<String>> {
             portable::get_files()
         }
+        /// Always false off Windows: Finder/Nautilus file copies carry an icon image too, so
+        /// "files + bitmap" does not mean "an image copied as a file" there.
+        pub fn has_clipboard_bitmap() -> bool {
+            false
+        }
 
         pub unsafe fn get_clipboard_raw_format(name: &str) -> Option<Vec<u8>> {
             portable::get_raw_format(name)

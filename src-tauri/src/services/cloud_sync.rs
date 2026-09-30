@@ -2110,10 +2110,10 @@ async fn move_webdav_resource(
     let from_url = webdav_url_for(cfg, from_relative);
     let destination = webdav_url_for(cfg, to_relative);
     // Single attempt, no retry: MOVE is only an atomicity optimisation over a direct PUT.
-    // Some providers (123pan) answer every MOVE with 500; retrying that status just burned
-    // ~4 s per file before the whole sync failed (upstream #164).
+    // Some providers (123pan) answer every MOVE with 500; retrying that status burned ~4 s
+    // per file and then failed the whole sync, forever (upstream #164).
     let method = Method::from_bytes(b"MOVE").expect("MOVE is a valid HTTP method");
-    let resp = webdav_with_auth(
+    let resp = match webdav_with_auth(
         client
             .request(method, &from_url)
             .header("Destination", destination)
@@ -2122,37 +2122,94 @@ async fn move_webdav_resource(
     )
     .send()
     .await
-    .map_err(|e| AppError::Network(e.to_string()))?;
+    {
+        Ok(resp) => resp,
+        // A direct PUT is idempotent, so a transport hiccup on MOVE falls back for this upload
+        // rather than failing the round; a real outage fails the PUT (which retries) instead.
+        Err(err) => {
+            eprintln!("[cloud_sync] WebDAV MOVE request failed, falling back to direct PUT: {err}");
+            return Ok(false);
+        }
+    };
 
     let status = resp.status();
     check_webdav_status_for_backoff(status);
-    if status.is_success() {
-        return Ok(true);
+    match webdav_move_fallback(status) {
+        MoveFallback::Published => {
+            record_webdav_move_result(cfg, None);
+            Ok(true)
+        }
+        MoveFallback::Backoff => Err(AppError::Network(format!(
+            "webdav MOVE publish throttled: {}",
+            status
+        ))),
+        MoveFallback::DirectPut { strikes } => {
+            eprintln!("[cloud_sync] WebDAV MOVE rejected ({status}), falling back to direct PUT");
+            if strikes > 0 {
+                record_webdav_move_result(cfg, Some(strikes));
+            }
+            Ok(false)
+        }
     }
-
-    // Any refusal falls back to a direct PUT. Remember it for this server so later uploads
-    // skip the temp-file + MOVE round trips entirely.
-    eprintln!(
-        "[cloud_sync] WebDAV MOVE rejected ({}), falling back to direct PUT for {}",
-        status, cfg.webdav_url
-    );
-    webdav_move_unsupported()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(cfg.webdav_url.trim_end_matches('/').to_string());
-    Ok(false)
 }
 
-fn webdav_move_unsupported() -> &'static Mutex<HashSet<String>> {
-    static CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashSet::new()))
+#[derive(Debug, PartialEq)]
+enum MoveFallback {
+    Published,
+    /// Rate limited: respect the cooldown instead of immediately sending more requests.
+    Backoff,
+    /// Fall back to a direct PUT for this upload. `strikes` count towards marking the server
+    /// as MOVE-less (at `WEBDAV_MOVE_UNSUPPORTED_STRIKES`); 0 means "don't count".
+    DirectPut { strikes: u32 },
+}
+
+const WEBDAV_MOVE_UNSUPPORTED_STRIKES: u32 = 2;
+
+fn webdav_move_fallback(status: StatusCode) -> MoveFallback {
+    match status.as_u16() {
+        200..=299 => MoveFallback::Published,
+        429 | 503 => MoveFallback::Backoff,
+        // The method itself is not implemented: definitive.
+        405 | 501 => MoveFallback::DirectPut {
+            strikes: WEBDAV_MOVE_UNSUPPORTED_STRIKES,
+        },
+        // What servers that silently lack MOVE answer (123pan). Can also be a one-off, so only
+        // repeated 500s without a success in between mark the server.
+        500 => MoveFallback::DirectPut { strikes: 1 },
+        // Conflicts, locks, auth, quota…: this upload only. The PUT surfaces real errors.
+        _ => MoveFallback::DirectPut { strikes: 0 },
+    }
+}
+
+/// Consecutive MOVE failures per WebDAV server. Reaching the threshold switches every later
+/// upload to that server to a direct PUT for the rest of the session.
+fn webdav_move_strikes() -> &'static Mutex<HashMap<String, u32>> {
+    static STRIKES: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+    STRIKES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn record_webdav_move_result(cfg: &CloudSyncConfig, strikes: Option<u32>) {
+    let key = cfg.webdav_url.trim_end_matches('/').to_string();
+    let mut map = webdav_move_strikes()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match strikes {
+        None => {
+            map.remove(&key);
+        }
+        Some(n) => {
+            let total = map.entry(key).or_insert(0);
+            *total = total.saturating_add(n);
+        }
+    }
 }
 
 fn webdav_move_known_unsupported(cfg: &CloudSyncConfig) -> bool {
-    webdav_move_unsupported()
+    webdav_move_strikes()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .contains(cfg.webdav_url.trim_end_matches('/'))
+        .get(cfg.webdav_url.trim_end_matches('/'))
+        .is_some_and(|n| *n >= WEBDAV_MOVE_UNSUPPORTED_STRIKES)
 }
 
 async fn upload_webdav_bytes_resource(
@@ -4430,6 +4487,29 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn webdav_move_fallback_policy() {
+        use super::{webdav_move_fallback, MoveFallback, WEBDAV_MOVE_UNSUPPORTED_STRIKES};
+        use reqwest::StatusCode;
+
+        let status = |code: u16| StatusCode::from_u16(code).unwrap();
+        assert_eq!(webdav_move_fallback(status(201)), MoveFallback::Published);
+        assert_eq!(webdav_move_fallback(status(204)), MoveFallback::Published);
+        // Rate limits must not trigger an extra PUT during the cooldown.
+        assert_eq!(webdav_move_fallback(status(429)), MoveFallback::Backoff);
+        assert_eq!(webdav_move_fallback(status(503)), MoveFallback::Backoff);
+        // Not implemented: one strike is enough.
+        assert_eq!(
+            webdav_move_fallback(status(405)),
+            MoveFallback::DirectPut { strikes: WEBDAV_MOVE_UNSUPPORTED_STRIKES }
+        );
+        // 123pan answers every MOVE with 500: falls back now, marks the server on repeat.
+        assert_eq!(webdav_move_fallback(status(500)), MoveFallback::DirectPut { strikes: 1 });
+        // Everything else falls back for that upload only.
+        assert_eq!(webdav_move_fallback(status(409)), MoveFallback::DirectPut { strikes: 0 });
+        assert_eq!(webdav_move_fallback(status(423)), MoveFallback::DirectPut { strikes: 0 });
+    }
 
     const TEST_PNG_BYTES: &[u8] = &[
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,

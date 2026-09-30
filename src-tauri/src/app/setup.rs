@@ -1054,18 +1054,24 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
 
                 let hide_size = 3;
 
-                let monitor_rects: Vec<(i32, i32, i32, i32)> = window
-                    .available_monitors()
-                    .map(|ms| {
-                        ms.iter()
-                            .map(|m| {
-                                let (p, s) = (m.position(), m.size());
-                                (p.x, p.y, s.width as i32, s.height as i32)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                // Only consulted once the window is within the docking threshold of an edge
+                // (the `&&` below short-circuits), so the monitor query is not paid every tick.
+                // While edge-hidden `dock` is unused, so skip it there too.
                 let shared = |dock: DockPosition, edge: i32| {
+                    if is_hidden_by_edge {
+                        return false;
+                    }
+                    let monitor_rects: Vec<(i32, i32, i32, i32)> = window
+                        .available_monitors()
+                        .map(|ms| {
+                            ms.iter()
+                                .map(|m| {
+                                    let (p, s) = (m.position(), m.size());
+                                    (p.x, p.y, s.width as i32, s.height as i32)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     edge_borders_other_monitor(
                         &monitor_rects,
                         dock,

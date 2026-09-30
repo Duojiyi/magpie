@@ -259,9 +259,9 @@ const AppHeader = ({
                 <button
                   className={`btn-icon type-filter-pill ${typeFilter === null ? 'active' : ''}`}
                   onClick={() => setTypeFilter(null)}
-                  title={t('type_all') || 'All'}
+                  title={t('type_all')}
                 >
-                  {t('type_all') || 'All'}
+                  {t('type_all')}
                 </button>
                 {['text', 'image', 'file', 'url', 'code', 'video', 'rich_text'].map(t => (
                   <button

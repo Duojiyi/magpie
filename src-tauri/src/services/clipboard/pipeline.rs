@@ -528,12 +528,24 @@ impl PipelineStage for PersistenceStage {
                 // and tags, but `entry` still carries the fresh capture's defaults. The UI
                 // replaces its row with this payload, so without syncing them back a pinned
                 // item showed up unpinned until the next refetch (upstream #152).
+                // Only these columns: a full entry read would decrypt content/HTML under the lock.
                 if merged_into_existing {
-                    if let Ok(Some(stored)) = db_state.repo.get_entry_by_id_with_conn(&conn, id) {
-                        entry.is_pinned = stored.is_pinned;
-                        entry.pinned_order = stored.pinned_order;
-                        entry.use_count = stored.use_count;
-                        entry.tags = stored.tags;
+                    if let Ok((is_pinned, pinned_order, use_count, tags_json)) = conn.query_row(
+                        "SELECT is_pinned, pinned_order, use_count, tags FROM clipboard_history WHERE id = ?1",
+                        [id],
+                        |row| {
+                            Ok((
+                                row.get::<_, i32>(0)? == 1,
+                                row.get::<_, i64>(1).unwrap_or(0),
+                                row.get::<_, i32>(2).unwrap_or(0),
+                                row.get::<_, String>(3).unwrap_or_else(|_| "[]".to_string()),
+                            ))
+                        },
+                    ) {
+                        entry.is_pinned = is_pinned;
+                        entry.pinned_order = pinned_order;
+                        entry.use_count = use_count;
+                        entry.tags = serde_json::from_str(&tags_json).unwrap_or_default();
                     }
                 }
                 if let Ok(deleted_ids) = db_state

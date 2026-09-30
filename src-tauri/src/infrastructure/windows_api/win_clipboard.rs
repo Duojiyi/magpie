@@ -1,7 +1,7 @@
 use windows::Win32::Foundation::{GlobalFree, HGLOBAL};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
-    GetClipboardFormatNameW, OpenClipboard, SetClipboardData,
+    GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GHND};
 
@@ -9,6 +9,12 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, Global
 const CF_DIB: u32 = 8; // DIB
 const CF_DIBV5: u32 = 17; // DIBV5
 const CF_UNICODETEXT: u32 = 13; // Unicode text
+
+/// Whether the clipboard carries a bitmap (CF_DIB / CF_DIBV5; CF_BITMAP is synthesized into
+/// these). Needs no OpenClipboard and forces no delayed rendering.
+pub fn has_clipboard_bitmap() -> bool {
+    unsafe { IsClipboardFormatAvailable(CF_DIB).is_ok() || IsClipboardFormatAvailable(CF_DIBV5).is_ok() }
+}
 
 /// Free a `GlobalAlloc`'d block that failed to make it onto the clipboard. Only call
 /// this when `SetClipboardData`/`GlobalLock` did *not* succeed for `h`: on success,

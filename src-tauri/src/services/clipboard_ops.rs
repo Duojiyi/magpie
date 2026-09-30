@@ -452,6 +452,8 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
             let _ = window.hide();
             crate::IS_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
             crate::app::window_manager::release_win_keys();
+            // Same reset as every other hide path (filters, search, transient search box).
+            crate::app::window_manager::notify_window_hidden(app_handle);
         }
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     }
@@ -1119,6 +1121,7 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
         crate::IS_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
         crate::NAVIGATION_ENABLED.store(false, Ordering::Relaxed); // Disable navigation like hide_window_cmd does
         crate::app::window_manager::release_win_keys();
+        crate::app::window_manager::notify_window_hidden(app_handle);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }

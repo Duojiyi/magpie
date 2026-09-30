@@ -613,22 +613,26 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
         // --- Core processing logic (same as before) ---
 
         // 1. Check Files
-        // With file capture off, a file drop must not end processing: QQ/QQNT (right-click →
-        // copy image) and screenshot tools put the image on the clipboard both as pixels and
-        // as a CF_HDROP of their cache file. Claiming the event here meant the image branch
-        // never ran and nothing was recorded (upstream #163). Plain Explorer file copies carry
-        // no image or text formats, so falling through still records nothing for them.
+        // With file capture off, a file drop that also carries a bitmap is an image copy, not
+        // a file copy: QQ/QQNT (right-click → copy image) and screenshot tools put the pixels
+        // on the clipboard next to a CF_HDROP of their cache file. Claiming the event here
+        // meant the image branch never ran and nothing was recorded (upstream #163). Only
+        // that case falls through; other file drops (which may also carry the paths as text)
+        // stay claimed. Off Windows the check is always false, since file-manager copies
+        // there always include an icon image.
         let capture_files_enabled = should_capture_file_entries(
             app.state::<SettingsState>()
                 .capture_files
                 .load(Ordering::Relaxed),
         );
         unsafe {
-            let dropped_files = if capture_files_enabled {
-                crate::infrastructure::windows_api::win_clipboard::get_clipboard_files()
-            } else {
-                None
-            };
+            let dropped_files =
+                crate::infrastructure::windows_api::win_clipboard::get_clipboard_files().filter(
+                    |_| {
+                        capture_files_enabled
+                            || !crate::infrastructure::windows_api::win_clipboard::has_clipboard_bitmap()
+                    },
+                );
             if let Some(files) = dropped_files {
                 let content = files.join("\n");
                 if !content.is_empty() {

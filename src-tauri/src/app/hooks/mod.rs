@@ -485,8 +485,10 @@ pub unsafe extern "system" fn keyboard_proc(
             };
 
             // The preference only covers arrow-key selection; Escape must still dismiss the
-            // window. The panel is shown without activation, so the webview never sees the key.
-            if !allow_navigation && vk != 0x1B {
+            // transient panel, which is shown without activation so the webview never sees the
+            // key. A pinned panel stays up while the user works elsewhere: there Escape belongs
+            // to the foreground app, as it did before.
+            if !allow_navigation && (vk != 0x1B || WINDOW_PINNED.load(Ordering::Relaxed)) {
                 return CallNextHookEx(None, n_code, w_param, l_param);
             }
 

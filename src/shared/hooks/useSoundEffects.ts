@@ -47,6 +47,9 @@ export const useSoundEffects = ({
 
     let ctx: AudioContext | null = null;
     let suspendTimer: ReturnType<typeof setTimeout> | undefined;
+    // In-flight idle suspend. A beep arriving meanwhile still reads state "running", so it
+    // must wait for the suspend to settle and resume, or the suspend would cut it off.
+    let suspending: Promise<void> | null = null;
     let disposed = false;
 
     // Created lazily on the first beep, suspended again once idle so the device is released.
@@ -58,7 +61,13 @@ export const useSoundEffects = ({
     const scheduleSuspend = () => {
       if (suspendTimer) clearTimeout(suspendTimer);
       suspendTimer = setTimeout(() => {
-        if (ctx && ctx.state === "running") ctx.suspend().catch(() => {});
+        if (!ctx || ctx.state !== "running") return;
+        suspending = ctx
+          .suspend()
+          .catch(() => {})
+          .finally(() => {
+            suspending = null;
+          });
       }, SUSPEND_AFTER_IDLE_MS);
     };
 
@@ -160,14 +169,16 @@ export const useSoundEffects = ({
         scheduleSuspend();
       };
 
-      if (c.state === "suspended") {
-        c.resume().then(play).catch((err) => {
+      // Cancel a pending idle suspend: this beep keeps the context busy.
+      if (suspendTimer) clearTimeout(suspendTimer);
+      const settled = suspending ?? Promise.resolve();
+      settled
+        .then(() => (c.state === "suspended" ? c.resume() : undefined))
+        .then(play)
+        .catch((err) => {
           console.error("Failed to resume audio ctx", err);
           play();
         });
-      } else {
-        play();
-      }
     });
 
     return () => {
