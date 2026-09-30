@@ -573,6 +573,17 @@ fn is_setting_sync_eligible(key: &str) -> bool {
             // syncing the epoch would make every device report the same one, which both
             // defeats reinstall detection and makes peers reset their cursors for no reason.
             | "cloud_sync_install_epoch"
+            // "Open with" executables (content_handler: `app.<content_type>`). They are run
+            // as programs, so accepting them from the WebDAV server would let whoever
+            // controls it execute code here; they are also machine-specific paths.
+            | "app.text"
+            | "app.code"
+            | "app.url"
+            | "app.link"
+            | "app.image"
+            | "app.file"
+            | "app.video"
+            | "app.rich_text"
     )
 }
 

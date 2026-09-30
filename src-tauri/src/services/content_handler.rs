@@ -58,7 +58,7 @@ pub async fn open_content(
 
     // Handle links/URLs
     if content_type == "link" || content_type == "url" {
-        return handle_url_content(&app_path, &content).await;
+        return handle_url_content(&app_handle, &app_path, &content).await;
     }
 
     // Check if content points to existing file(s)
@@ -88,6 +88,7 @@ pub async fn open_content(
 
     // Launch the file with appropriate application
     launch_file_with_app(
+        &app_handle,
         &app_path,
         &temp_path,
         &path_str,
@@ -128,7 +129,11 @@ fn get_app_path_for_content_type(
     Ok(val)
 }
 
-async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<(), AppError> {
+async fn handle_url_content(
+    app_handle: &tauri::AppHandle,
+    app_path: &Option<String>,
+    content: &str,
+) -> Result<(), AppError> {
     if let Some(app) = app_path {
         if std::path::Path::new(app).exists() {
             Command::new(app)
@@ -140,7 +145,7 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
             // Check for macOS-style paths on Windows to avoid invalid Start-Process calls
             #[cfg(target_os = "windows")]
             if app.starts_with("/Applications/") || app.contains(".app") {
-                return launch_default_handler(content).await;
+                return launch_default_handler(app_handle, content).await;
             }
 
             println!("Attempting to launch URL handler: {}", app);
@@ -167,39 +172,57 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
                             "Failed to launch via powershell: {}, falling back to default",
                             e
                         );
-                        return launch_default_handler(content).await;
+                        return launch_default_handler(app_handle, content).await;
                     }
                 }
             }
 
             #[cfg(not(target_os = "windows"))]
             {
-                return launch_default_handler(content).await;
+                return launch_default_handler(app_handle, content).await;
             }
         }
     } else {
-        return launch_default_handler(content).await;
+        return launch_default_handler(app_handle, content).await;
     }
 }
 
-async fn launch_default_handler(content: &str) -> Result<(), AppError> {
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", "start", "", content])
-            .creation_flags(0x08000000);
-        cmd.spawn()
-            .map_err(|e| AppError::Internal(format!("启动默认浏览器失败: {}", e)))?;
-    }
+/// Schemes a history/chat link may be handed to the OS default handler with. Anything else
+/// (file:, UNC-ish, ms-* protocol handlers…) is refused: links can come from any copied text
+/// and from unauthenticated LAN chat peers.
+fn is_openable_url(content: &str) -> bool {
+    let trimmed = content.trim();
+    let Some((scheme, rest)) = trimmed.split_once(':') else {
+        return false;
+    };
+    !rest.is_empty()
+        && !trimmed.chars().any(|c| c.is_control())
+        && matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto" | "ftp" | "ftps"
+        )
+}
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        Command::new("open")
-            .arg(content)
-            .spawn()
-            .map_err(|e| AppError::Internal(format!("启动默认浏览器失败: {}", e)))?;
+async fn launch_default_handler(app: &tauri::AppHandle, content: &str) -> Result<(), AppError> {
+    // Never through `cmd /C start`: cmd.exe re-parses the argument, so `&`, `|` or `^` in a
+    // URL ran arbitrary commands (and ordinary `?a=1&b=2` links were cut at the `&`). The
+    // opener plugin hands the URL to ShellExecute / `open` / `xdg-open` as a single argument;
+    // it also fixes Linux, where the `open` binary used here before is not the opener.
+    if !is_openable_url(content) {
+        return Err(AppError::Validation(format!(
+            "不支持打开此类链接: {}",
+            content.chars().take(80).collect::<String>()
+        )));
     }
-    Ok(())
+    tauri_plugin_opener::OpenerExt::opener(app)
+        .open_url(content.trim(), None::<&str>)
+        .map_err(|e| AppError::Internal(format!("启动默认浏览器失败: {}", e)))
+}
+
+fn open_path_with_default_app(app: &tauri::AppHandle, path_str: &str) -> Result<(), AppError> {
+    tauri_plugin_opener::OpenerExt::opener(app)
+        .open_path(path_str, None::<&str>)
+        .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))
 }
 
 fn is_file_type(content_type: &str) -> bool {
@@ -274,6 +297,7 @@ fn create_temp_file(
 }
 
 async fn launch_file_with_app(
+    app_handle: &tauri::AppHandle,
     app_path: &Option<String>,
     temp_path: &std::path::Path,
     path_str: &str,
@@ -290,7 +314,7 @@ async fn launch_file_with_app(
             // Check for macOS-style paths on Windows to avoid invalid WinRT/Start-Process calls
             #[cfg(target_os = "windows")]
             if app.starts_with("/Applications/") || app.contains(".app") {
-                return launch_with_default_app(path_str, content_type, use_direct_path);
+                return launch_with_default_app(app_handle, path_str, content_type, use_direct_path);
             }
 
             println!(
@@ -299,13 +323,16 @@ async fn launch_file_with_app(
             );
             if let Err(e) = launch_uwp_with_file(app, path_str).await {
                 println!("WinRT launch failed: {}, falling back to old method", e);
-                let safe_path = path_str.replace("'", "''");
-                let ps_script = format!(
-                    "Start-Process -FilePath 'shell:AppsFolder\\{}' -ArgumentList '{}'",
-                    app, safe_path
-                );
                 #[cfg(target_os = "windows")]
                 {
+                    // Both values are single-quoted PowerShell strings; escape both. `app` comes
+                    // from settings (which cloud settings sync can write), so leaving it raw let
+                    // a crafted AppUserModelID break out and run arbitrary PowerShell.
+                    let ps_script = format!(
+                        "Start-Process -FilePath 'shell:AppsFolder\\{}' -ArgumentList '{}'",
+                        app.replace('\'', "''"),
+                        path_str.replace('\'', "''")
+                    );
                     let mut cmd = Command::new("powershell");
                     cmd.args(["-NoProfile", "-Command", &ps_script])
                         .creation_flags(0x08000000);
@@ -314,6 +341,7 @@ async fn launch_file_with_app(
                         Err(err) => {
                             println!("Fallback launch failed: {}, using system default", err);
                             return launch_with_default_app(
+                                app_handle,
                                 path_str,
                                 content_type,
                                 use_direct_path,
@@ -323,18 +351,17 @@ async fn launch_file_with_app(
                 }
 
                 #[cfg(not(target_os = "windows"))]
-                Command::new("open").arg(safe_path).spawn().map_err(|e| {
-                    AppError::Internal(format!("启动 UWP 程序失败 (Fallback): {}", e))
-                })?;
+                open_path_with_default_app(app_handle, path_str)?;
             }
         }
     } else {
-        launch_with_default_app(path_str, content_type, use_direct_path)?;
+        launch_with_default_app(app_handle, path_str, content_type, use_direct_path)?;
     }
     Ok(())
 }
 
 fn launch_with_default_app(
+    _app_handle: &tauri::AppHandle,
     path_str: &str,
     _content_type: &str,
     _use_direct_path: bool,
@@ -367,13 +394,9 @@ fn launch_with_default_app(
         }
     }
 
+    // `open` exists only on macOS; the opener plugin also covers Linux (xdg-open).
     #[cfg(not(target_os = "windows"))]
-    {
-        Command::new("open")
-            .arg(path_str)
-            .spawn()
-            .map_err(|e| AppError::Internal(format!("Failed to open file: {}", e)))?;
-    }
+    open_path_with_default_app(_app_handle, path_str)?;
 
     Ok(())
 }

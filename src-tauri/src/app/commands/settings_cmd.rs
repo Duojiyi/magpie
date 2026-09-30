@@ -120,11 +120,6 @@ pub fn save_setting(
                 .sound_enabled
                 .store(value == "true", Ordering::Relaxed);
         }
-        "app.sound_paste_enabled" => {
-            settings_state
-                .delete_after_paste
-                .store(value != "false", Ordering::Relaxed);
-        }
         "app.persistent" => {
             settings_state
                 .persistent
@@ -459,6 +454,34 @@ pub fn restart_cloud_sync_client(app_handle: AppHandle) {
 #[tauri::command]
 pub fn request_cloud_sync(app_handle: AppHandle) {
     crate::services::cloud_sync::request_cloud_sync(app_handle);
+}
+
+/// The frontend called this when cloud sync was switched off, but no such command existed:
+/// the rejected invoke skipped saving the setting, so sync kept running and came back on
+/// after a restart.
+#[tauri::command]
+pub fn stop_cloud_sync_client(app_handle: AppHandle) {
+    crate::services::cloud_sync::stop_cloud_sync_client(app_handle);
+}
+
+/// macOS "hide Dock icon". Persists the choice; `setup` re-applies it at startup.
+#[tauri::command]
+pub fn set_dock_visible(
+    app_handle: AppHandle,
+    db_state: State<'_, DbState>,
+    visible: bool,
+) -> AppResult<()> {
+    db_state
+        .settings_repo
+        .set("app.hide_dock_icon", if visible { "false" } else { "true" })
+        .map_err(AppError::from)?;
+    #[cfg(target_os = "macos")]
+    app_handle
+        .set_dock_visibility(visible)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = app_handle;
+    Ok(())
 }
 
 #[tauri::command]

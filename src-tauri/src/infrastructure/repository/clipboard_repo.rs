@@ -22,6 +22,56 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+/// Record a cloud-sync deletion so the next pull does not bring the row back.
+pub(crate) fn upsert_tombstone(
+    conn: &Connection,
+    content_type: &str,
+    content_hash: i64,
+    deleted_at: i64,
+) -> Result<(), String> {
+    if !is_syncable_content_type(content_type) || content_hash == 0 {
+        return Ok(());
+    }
+
+    conn.execute(
+        "INSERT INTO cloud_sync_tombstones (content_type, content_hash, deleted_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(content_type, content_hash)
+         DO UPDATE SET deleted_at = MAX(cloud_sync_tombstones.deleted_at, excluded.deleted_at)",
+        params![content_type, content_hash, deleted_at],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Attachments are content-addressed (`img_<hash>.png` is reused for identical bytes), so
+/// several rows can point at one file: the same image copied with dedupe off, an image entry
+/// and a rich-text fallback of the same bitmap, cloud-pulled copies. Deleting one row must
+/// not delete the file the others still show. Matched by file name, which is unique per
+/// content, in both `content` and `html_content` (covers path and file:// URL forms).
+///
+/// ponytail: rows whose text is encrypted (sensitive tag) cannot be matched, so a file
+/// shared only with a sensitive row can still be removed; a reference-count column would
+/// close that.
+pub(crate) fn attachment_still_referenced(
+    conn: &Connection,
+    excluding_id: i64,
+    path: &std::path::Path,
+) -> bool {
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT 1 FROM clipboard_history
+         WHERE id <> ?1
+           AND (instr(content, ?2) > 0 OR instr(COALESCE(html_content, ''), ?2) > 0)
+         LIMIT 1",
+        params![excluding_id, file_name],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
 fn is_syncable_content_type(content_type: &str) -> bool {
     matches!(
         content_type,
@@ -177,19 +227,7 @@ impl SqliteClipboardRepository {
         content_hash: i64,
         deleted_at: i64,
     ) -> Result<(), String> {
-        if !is_syncable_content_type(content_type) || content_hash == 0 {
-            return Ok(());
-        }
-
-        conn.execute(
-            "INSERT INTO cloud_sync_tombstones (content_type, content_hash, deleted_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(content_type, content_hash)
-             DO UPDATE SET deleted_at = MAX(cloud_sync_tombstones.deleted_at, excluded.deleted_at)",
-            params![content_type, content_hash, deleted_at],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        upsert_tombstone(conn, content_type, content_hash, deleted_at)
     }
 
     fn clear_tombstone_with_conn(
@@ -501,7 +539,7 @@ impl SqliteClipboardRepository {
                     &attachments_dir,
                 );
                 for path in files_to_remove {
-                    if path.exists() {
+                    if path.exists() && !attachment_still_referenced(conn, id, &path) {
                         let _ = std::fs::remove_file(path);
                     }
                 }
@@ -1385,6 +1423,31 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    #[test]
+    fn shared_attachment_is_kept_while_another_row_references_it() {
+        let conn = setup_test_db();
+        let insert = |id: i64, content: &str, html: Option<&str>| {
+            conn.execute(
+                "INSERT INTO clipboard_history (id, content_type, content, html_content, source_app, timestamp, preview, is_external)
+                 VALUES (?1, 'image', ?2, ?3, 'test', 0, '', 1)",
+                params![id, content, html],
+            )
+            .unwrap();
+        };
+        // Forward slashes: a path separator on every platform the tests run on.
+        let path = std::path::Path::new("/data/attachments/img_42.png");
+        insert(1, "/data/attachments/img_42.png", None);
+        insert(2, "rich", Some("<p>x</p><!--TIEZ_RICH_IMAGE:file:///data/attachments/img_42.png-->"));
+
+        // Row 1 is being deleted; row 2 still uses the file through its HTML fallback.
+        assert!(attachment_still_referenced(&conn, 1, path));
+        conn.execute("DELETE FROM clipboard_history WHERE id = 2", []).unwrap();
+        assert!(!attachment_still_referenced(&conn, 1, path));
+        // A different, longer hash is not a match.
+        insert(3, "/data/attachments/img_421.png", None);
+        assert!(!attachment_still_referenced(&conn, 1, path));
     }
 
     /// 构造一条文本类型 ClipboardEntry

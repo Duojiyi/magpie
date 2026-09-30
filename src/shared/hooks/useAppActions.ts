@@ -86,10 +86,11 @@ export const useAppActions = ({
   const saveCloudSync = useCallback(
     async (key: string, value: string) => {
       try {
+        // Persist first: a failure while stopping must never leave the switch saved as "on".
+        await invoke("save_setting", { key, value });
         if (key === "cloud_sync_enabled" && value === "false") {
           await invoke("stop_cloud_sync_client");
         }
-        await invoke("save_setting", { key, value });
         const cloudKeys = [
           "cloud_sync_enabled",
           "cloud_sync_auto",

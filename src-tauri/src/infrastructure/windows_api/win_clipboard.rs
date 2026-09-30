@@ -1142,6 +1142,28 @@ unsafe fn write_image_formats_locked(
 unsafe fn write_gif_temp_file(gif_data: Option<&[u8]>) -> Option<String> {
     let gif_bytes = gif_data?;
     let temp_dir = std::env::temp_dir();
+    // Each GIF paste writes a new file; without this they accumulated in %TEMP% forever.
+    // Files older than an hour are no longer on the clipboard and safe to drop.
+    if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+        let cutoff = std::time::Duration::from_secs(3600);
+        for entry in entries.flatten() {
+            let is_ours = entry
+                .file_name()
+                .to_str()
+                .map(|n| n.starts_with("Magpie_GIF_") && n.ends_with(".gif"))
+                .unwrap_or(false);
+            let is_stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map(|age| age > cutoff)
+                .unwrap_or(false);
+            if is_ours && is_stale {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
     let filename = format!(
         "Magpie_GIF_{}.gif",
         std::time::SystemTime::now()

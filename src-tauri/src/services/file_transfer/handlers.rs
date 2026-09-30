@@ -358,12 +358,29 @@ pub async fn upload(
             if let Ok(mut file) = File::create(&target_path).await {
                 let mut stream = field;
                 let mut write_success = true;
-                while let Some(Ok(chunk)) = stream.next().await {
+                // `while let Some(Ok(..))` treated a stream error (client disconnect, body
+                // limit) like EOF and registered the truncated file as received.
+                while let Some(next) = stream.next().await {
+                    let chunk = match next {
+                        Ok(chunk) => chunk,
+                        Err(e) => {
+                            eprintln!("Upload stream aborted: {}", e);
+                            write_success = false;
+                            break;
+                        }
+                    };
                     if let Err(e) = file.write_all(&chunk).await {
                         eprintln!("Error writing: {}", e);
                         write_success = false;
                         break;
                     }
+                }
+                if write_success {
+                    write_success = file.flush().await.is_ok();
+                }
+                if !write_success {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&target_path).await;
                 }
 
                 if write_success {
@@ -641,9 +658,13 @@ pub async fn handle_file_download_proxy(
                         let parts: Vec<&str> = r.split('-').collect();
                         if parts.len() == 2 {
                             let start = parts[0].parse::<u64>().unwrap_or(0);
-                            let end = parts[1].parse::<u64>().unwrap_or(total_size - 1);
+                            let end = parts[1]
+                                .parse::<u64>()
+                                .unwrap_or_else(|_| total_size.saturating_sub(1));
 
-                            if start < total_size {
+                            // `end < start` (e.g. `bytes=5-2`) made `end - start + 1` wrap; such
+                            // a range is ignored and the full file is served instead.
+                            if start < total_size && start <= end {
                                 let end = if end >= total_size {
                                     total_size - 1
                                 } else {

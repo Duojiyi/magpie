@@ -286,6 +286,7 @@ pub fn rename_tag_globally(
 
 #[tauri::command]
 pub fn delete_tag_from_all(
+    app_handle: AppHandle,
     state: State<'_, DbState>,
     session: State<'_, SessionHistory>,
     app_data: State<'_, AppDataDir>,
@@ -296,11 +297,16 @@ pub fn delete_tag_from_all(
         session_items.retain(|item| !item.tags.contains(&tag_name));
     }
 
-    let data_dir = app_data.0.lock().unwrap();
-    state
-        .tag_repo
-        .delete_globally(&tag_name, Some(&data_dir))
-        .map_err(AppError::from)
+    {
+        let data_dir = app_data.0.lock().unwrap();
+        state
+            .tag_repo
+            .delete_globally(&tag_name, Some(&data_dir))
+            .map_err(AppError::from)?;
+    }
+    // Push the new tombstones so other devices drop the items too.
+    crate::services::cloud_sync::request_cloud_sync(app_handle);
+    Ok(())
 }
 
 #[tauri::command]

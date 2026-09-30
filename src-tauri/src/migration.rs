@@ -99,10 +99,10 @@ pub fn perform_migration_v028(default_app_dir: &PathBuf) {
         }
     }
 
-    // Always try to clean up old version residues on every startup
-    let custom_path = cleanup_old_install_registry();
-    cleanup_old_start_menu();
-    cleanup_old_install_folder(custom_path);
+    // No unconditional "clean up on every startup" here any more. The upstream app (TieZ,
+    // still named 贴汁) is a separate product users may have installed alongside; running this
+    // on every start silently deleted its uninstall entry and install folder. The cleanup now
+    // only runs as part of an actual data migration above.
 }
 
 /// v0.2.8 Rename Migration: Registry Cleanup - Returns found install location if any
@@ -222,6 +222,15 @@ pub fn cleanup_old_start_menu() {
     }
 }
 
+/// Only a folder literally named after the legacy app may be removed recursively.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_legacy_install_dir_name(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.contains("贴汁"))
+        .unwrap_or(false)
+}
+
 /// v0.2.8 Rename Migration: Clean up old installation directory
 pub fn cleanup_old_install_folder(custom_path: Option<PathBuf>) {
     #[cfg(windows)]
@@ -256,6 +265,12 @@ pub fn cleanup_old_install_folder(custom_path: Option<PathBuf>) {
         for path_opt in possible_paths.iter() {
             if let Some(path) = path_opt {
                 println!(">>> [CLEANUP] Checking installation path: {:?}", path);
+                // The registry path is whatever folder the user installed into, e.g. `D:\Apps`.
+                // Never recursively delete a folder that is not itself the legacy app folder.
+                if !is_legacy_install_dir_name(path) {
+                    println!(">>> [CLEANUP] Skipping non-legacy folder: {:?}", path);
+                    continue;
+                }
                 if path.exists() && path.is_dir() {
                     // Safety check: Don't delete if it's the current running dir (unlikely due to rename, but good practice)
                     if let Ok(current_exe) = std::env::current_exe() {
@@ -943,5 +958,20 @@ mod migration_log_and_tmp_tests {
             "app.magpie.tmp",
             "tmp 目录名应为 <目标名>.tmp"
         );
+    }
+}
+
+#[cfg(test)]
+mod legacy_cleanup_guard_tests {
+    use super::is_legacy_install_dir_name;
+    use std::path::Path;
+
+    #[test]
+    fn only_the_legacy_app_folder_is_eligible_for_recursive_delete() {
+        assert!(is_legacy_install_dir_name(Path::new(r"C:\Program Files\贴汁")));
+        assert!(is_legacy_install_dir_name(Path::new(r"D:\Apps\贴汁")));
+        // A parent folder recorded as InstallLocation must never be wiped.
+        assert!(!is_legacy_install_dir_name(Path::new(r"D:\Apps")));
+        assert!(!is_legacy_install_dir_name(Path::new(r"D:\")));
     }
 }

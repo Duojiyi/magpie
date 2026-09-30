@@ -1377,6 +1377,16 @@ mod tests {
     }
 
     #[test]
+    fn cf_html_offsets_inside_a_multibyte_char_do_not_panic() {
+        // Offset 1 falls inside "中" (3 bytes). This used to be a `str` slice panic.
+        let raw = "中StartHTML:1 EndHTML:4".as_bytes();
+        let _ = parse_cf_html(raw);
+        // Well-formed header still parses.
+        let html = "Version:0.9\r\nStartHTML:0000000055\r\nEndHTML:0000000064\r\n<p>hi</p>\r\n";
+        assert_eq!(parse_cf_html(html.as_bytes()).as_deref(), Some("<p>hi</p>"));
+    }
+
+    #[test]
     fn numeric_html_entities_are_decoded() {
         assert_eq!(
             extract_plain_text_from_htmlish("<span>A&#32;B&#x20;C&#20013;&#x4E2D;</span>"),
@@ -2444,13 +2454,13 @@ pub fn parse_cf_html(raw: &[u8]) -> Option<String> {
 
     if s < e {
         let content = match encoding {
-            HtmlEncoding::Utf8 => {
-                if e <= raw_str.len() {
-                    Some(raw_str[s..e].to_string())
-                } else {
-                    None
-                }
-            }
+            // CF_HTML offsets are byte offsets into the raw payload. Slice the bytes, not the
+            // decoded String: an offset that is untrusted (any app, or plain text that merely
+            // looks like a header) and lands inside a multi-byte character made `str` slicing
+            // panic, which aborts the whole app in release builds.
+            HtmlEncoding::Utf8 => raw
+                .get(s..e)
+                .map(|bytes| String::from_utf8_lossy(bytes).into_owned()),
             HtmlEncoding::Utf16Le => {
                 if e <= raw.len() {
                     let u16_buf: Vec<u16> = raw[s..e]

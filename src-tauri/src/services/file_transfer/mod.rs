@@ -214,11 +214,24 @@ pub async fn toggle_file_server(
     enabled: bool,
     port: Option<u16>,
 ) -> Result<String, String> {
+    // Serialize toggles: the "already running" check and storing the new handle are split
+    // by an await (bind). Two concurrent enables (startup autostart, get_download_url, the
+    // UI) both bound a listener and one handle was overwritten, leaving a LAN server that
+    // "disable" could no longer stop.
+    static TOGGLE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let _toggle_guard = TOGGLE_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+
     if enabled {
         {
             let handle = SERVER_HANDLE.lock().unwrap();
             if handle.is_some() {
-                return Ok("Server already running".to_string());
+                // Same shape as a fresh start (the port), so callers such as
+                // get_download_url can parse it.
+                let port = app_handle.state::<ServerInfo>().port.load(Ordering::SeqCst);
+                return Ok(port.to_string());
             }
         }
         let target_port = port.unwrap_or(18888);

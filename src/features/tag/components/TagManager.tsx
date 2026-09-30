@@ -119,6 +119,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
 
     useEffect(() => {
         let unlisteners: (() => void)[] = [];
+        let disposed = false;
         const setupListeners = async () => {
             const handleUpdate = () => {
                 // Don't refresh if we're in the middle of a delete operation
@@ -126,12 +127,19 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                 fetchTags();
                 if (selectedTagRef.current) loadTagItems(selectedTagRef.current);
             };
-            unlisteners.push(await listen('clipboard-changed', handleUpdate));
-            unlisteners.push(await listen('clipboard-updated', handleUpdate));
-            unlisteners.push(await listen('clipboard-removed', handleUpdate));
+            // Cleanup can run before these awaits resolve (the effect re-runs whenever
+            // isDeleting flips); a listener registered after that must be removed at once.
+            for (const name of ['clipboard-changed', 'clipboard-updated', 'clipboard-removed']) {
+                const off = await listen(name, handleUpdate);
+                if (disposed) off();
+                else unlisteners.push(off);
+            }
         };
         setupListeners();
-        return () => unlisteners.forEach(f => f());
+        return () => {
+            disposed = true;
+            unlisteners.forEach(f => f());
+        };
     }, [isDeleting]);
 
     useEffect(() => { fetchTags(); }, []);

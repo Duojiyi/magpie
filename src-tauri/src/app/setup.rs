@@ -127,6 +127,20 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // 10. Tray Setup
     setup_tray(app, settings.hide_tray_icon);
 
+    // 10.1 macOS: re-apply "hide Dock icon" (saved by set_dock_visible).
+    #[cfg(target_os = "macos")]
+    if app
+        .state::<DbState>()
+        .settings_repo
+        .get("app.hide_dock_icon")
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("true")
+    {
+        let _ = app.handle().set_dock_visibility(false);
+    }
+
     // 11. Win32 Hook Initialization
     #[cfg(target_os = "windows")]
     init_win32_hooks(app);

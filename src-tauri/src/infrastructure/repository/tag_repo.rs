@@ -227,11 +227,34 @@ impl TagRepository for SqliteTagRepository {
                         // is_external
                         let content_path = self.maybe_decrypt_text(&entry.0);
                         let path = std::path::Path::new(&content_path);
-                        if path.starts_with(&attachments_dir) && path.exists() {
+                        if path.starts_with(&attachments_dir)
+                            && path.exists()
+                            && !crate::infrastructure::repository::clipboard_repo::attachment_still_referenced(
+                                &conn, id, path,
+                            )
+                        {
                             let _ = std::fs::remove_file(path);
                         }
                     }
                 }
+            }
+            // Tombstone first, like a normal delete: without it the next cloud pull finds no
+            // local row and no tombstone and re-inserts every item of the "deleted" tag.
+            if let Ok((content_type, content_hash)) = conn.query_row(
+                "SELECT content_type, content_hash FROM clipboard_history WHERE id = ?",
+                [id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            ) {
+                let deleted_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                let _ = crate::infrastructure::repository::clipboard_repo::upsert_tombstone(
+                    &conn,
+                    &content_type,
+                    content_hash,
+                    deleted_at,
+                );
             }
             let _ = conn.execute("DELETE FROM entry_tags WHERE entry_id = ?", params![id]);
             let _ = conn.execute("DELETE FROM clipboard_history WHERE id = ?", params![id]);

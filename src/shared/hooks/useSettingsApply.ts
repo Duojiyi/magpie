@@ -92,9 +92,10 @@ export const useSettingsApply = ({
       applySystemMode();
     }
 
+    // Tauri maps camelCase keys to snake_case params; `color_mode` was silently dropped.
     invoke("set_theme", {
       theme: normalizedTheme,
-      color_mode: colorMode,
+      colorMode,
     }).catch(console.error);
 
     let unlisten: (() => void) | null = null;
@@ -108,7 +109,7 @@ export const useSettingsApply = ({
           applyExplicitMode(next);
           invoke("set_theme", {
             theme: normalizedTheme,
-            color_mode: "system",
+            colorMode: "system",
           }).catch(console.error);
         })
         .then((f) => {

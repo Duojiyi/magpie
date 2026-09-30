@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { ChevronDown, ChevronRight, ClipboardCopy, Settings } from "lucide-react";
 import type { CardDensity } from "../../../app/types";
 
@@ -128,7 +129,12 @@ const GeneralSettingsGroup = ({
                             onChange={(e) => {
                                 const enabled = e.target.checked;
                                 setAutoStart(enabled);
-                                invoke("toggle_autostart", { enabled }).catch(console.error);
+                                invoke("toggle_autostart", { enabled }).catch((err) => {
+                                    // Registration failed: put the switch back and say why.
+                                    console.error(err);
+                                    setAutoStart(!enabled);
+                                    emit("toast", { msg: String(err), variant: "error" }).catch(console.error);
+                                });
                             }}
                         />
                         <div className="toggle"><div className="left" /><div className="right" /></div>

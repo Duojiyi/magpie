@@ -29,6 +29,8 @@ use crate::infrastructure::windows_ext::WindowExt;
 
 // Store registered hotkey IDs for cleanup
 static BLOCKED_HOTKEY_IDS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+#[cfg(target_os = "windows")]
+static PASTE_SOUND_V_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
 fn quick_paste_index_from_vk(vk: u32) -> Option<usize> {
@@ -382,8 +384,21 @@ pub unsafe extern "system" fn keyboard_proc(
             let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0)
                 || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
 
-            if vk == 0x56 && ctrl_down && !alt_down && !shift_down && !win_down {
+            // Holding Ctrl+V auto-repeats key-downs (~30/s); only the first press of V counts,
+            // otherwise every repeat spawned a thread and replayed the paste sound.
+            let first_v_press = if vk == 0x56 {
                 if is_down {
+                    !PASTE_SOUND_V_HELD.swap(true, Ordering::Relaxed)
+                } else {
+                    PASTE_SOUND_V_HELD.store(false, Ordering::Relaxed);
+                    false
+                }
+            } else {
+                false
+            };
+
+            if first_v_press && ctrl_down && !alt_down && !shift_down && !win_down {
+                {
                     if let Some(handle) = GLOBAL_APP_HANDLE.get() {
                         // try_state: see comment on quick_paste_modifier_from_settings above.
                         if let Some(settings) = handle.try_state::<SettingsState>() {

@@ -668,7 +668,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
                         if (last_app_hash != 0
                             && (last_app_hash == current_hash || last_app_hash_alt == current_hash))
-                            && (now_secs - last_app_time) < 10
+                            && now_secs.saturating_sub(last_app_time) < 10
                         {
                             crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst);
                             crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);
@@ -753,7 +753,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                         && ((current_hash == last_app_hash || current_hash == last_app_hash_alt)
                             || (current_html_hash == last_app_hash
                                 || current_html_hash == last_app_hash_alt))
-                        && (now_secs - last_app_time) < 10
+                        && now_secs.saturating_sub(last_app_time) < 10
                     {
                         crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst);
                         crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);
@@ -1067,7 +1067,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                     if (last_app_hash != 0
                         && (current_hash == last_app_hash
                             || current_hash == crate::LAST_APP_SET_HASH_ALT.load(Ordering::SeqCst)))
-                        && (now_secs - last_app_time) < 10
+                        && now_secs.saturating_sub(last_app_time) < 10
                     {
                         crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst);
                         crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);

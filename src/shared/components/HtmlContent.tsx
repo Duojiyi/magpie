@@ -12,7 +12,10 @@ import {
 // clean-up below: it strips <iframe>/<object>/<embed>/<form>/<base> (including
 // srcdoc-based script execution) and any on*/javascript: vectors we might miss,
 // which the previous hand-rolled sanitizer did not cover.
-const FORBID_TAGS = ["iframe", "object", "embed", "form", "base", "link", "meta", "svg", "math"];
+// <style> is forbidden too: the card is rendered with innerHTML into the app's own document
+// (no shadow root), so a copied `<style>body{display:none}</style>` restyled the whole app.
+// Inline style attributes, which carry most pasted formatting, are unaffected.
+const FORBID_TAGS = ["iframe", "object", "embed", "form", "base", "link", "meta", "svg", "math", "style"];
 const FORBID_ATTR = ["srcdoc", "formaction", "xlink:href"];
 // Extend DOMPurify's default scheme allowlist (http/https/mailto/tel/...) with the
 // custom schemes Tauri uses to serve local files, so legitimate <img src> values
