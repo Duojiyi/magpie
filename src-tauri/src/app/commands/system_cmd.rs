@@ -720,80 +720,63 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
         }
     }
 
-    // 1. Move the data. Order matters for failure handling: nothing is deleted from the old
-    // folder until the database and both data folders are in place at the new one, and any
-    // failure before that undoes what was already moved. Previously the folders moved first
-    // and a failing database copy returned early, leaving attachments at the new path while
-    // the database and datapath.txt still pointed at the old one (every image broken).
-    let mut moved_folders: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
-    let mut copied_folders: Vec<std::path::PathBuf> = Vec::new();
-    let mut copied_db_files: Vec<std::path::PathBuf> = Vec::new();
-    let mut displaced_backups: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
-    // Old folders that were copied (not renamed); deleted only once everything succeeded.
-    let mut copied_sources: Vec<std::path::PathBuf> = Vec::new();
+    // 1. Move the data. Nothing is deleted from the old folder until the database and both
+    // data folders are in place at the new one and datapath.txt points there; any failure
+    // before that undoes what was already moved. Previously the folders moved first and a
+    // failing database copy returned early, leaving attachments at the new path while the
+    // database and datapath.txt still pointed at the old one (every image broken).
+    let mut plan = DataMoveRollback::default();
 
-    let rollback = |moved: &[(std::path::PathBuf, std::path::PathBuf)],
-                    copied_dirs: &[std::path::PathBuf],
-                    copied_db: &[std::path::PathBuf],
-                    backups: &[(std::path::PathBuf, std::path::PathBuf)]| {
-        for (old_folder, new_folder) in moved {
-            let _ = std::fs::rename(new_folder, old_folder);
+    // The connection lock is held for the whole move and commit: the WAL is flushed into
+    // clipboard.db, and no capture can write into the old database (or its attachments)
+    // after the copy was taken. The frontend relaunches right after this returns.
+    let db_state = app_handle.try_state::<crate::database::DbState>();
+    // Recover from a poisoned lock instead of skipping the flush (a skipped checkpoint is
+    // exactly the data loss this guards against).
+    let _conn_guard = db_state.as_ref().map(|state| {
+        let conn = state
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+            eprintln!("[set_data_path] wal_checkpoint before migration failed: {e}");
         }
-        for dir in copied_dirs {
-            let _ = std::fs::remove_dir_all(dir);
-        }
-        for file in copied_db {
-            let _ = std::fs::remove_file(file);
-        }
-        for (backup, original) in backups {
-            let _ = std::fs::rename(backup, original);
-        }
-    };
+        conn
+    });
 
-    // 1.1 Database first, copied (never moved) while holding the connection lock: the WAL is
-    // flushed into clipboard.db and no capture can write between the flush and the copy, so
-    // the copy is self-contained and consistent. The old file stays as-is until the end.
-    {
-        let db_state = app_handle.try_state::<crate::database::DbState>();
-        // Recover from a poisoned lock instead of skipping the flush (a skipped checkpoint is
-        // exactly the data loss this guards against).
-        let conn_guard = db_state.as_ref().map(|state| {
-            state
-                .conn
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        });
-        if let Some(conn) = conn_guard.as_ref() {
-            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
-                eprintln!("[set_data_path] wal_checkpoint before migration failed: {e}");
-            }
+    // 1.1 Database first, copied (not moved). The old copy is left in place: on Windows it
+    // cannot be removed while open, and removing it on Unix would unlink the live file.
+    let backup_suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    for name in ["clipboard.db", "clipboard.db-wal", "clipboard.db-shm"] {
+        let old_db = old_path_buf.join(name);
+        if !old_db.exists() {
+            continue;
         }
-
-        for name in ["clipboard.db", "clipboard.db-wal", "clipboard.db-shm"] {
-            let old_db = old_path_buf.join(name);
-            if !old_db.exists() {
-                continue;
-            }
-            let new_db = new_data_path.join(name);
-            if new_db.exists() {
-                // Keep whatever database the destination already had, restorable on failure.
-                let backup = new_data_path.join(format!("{}.backup", name));
-                if backup.exists() {
-                    let _ = std::fs::remove_file(&backup);
-                }
-                if std::fs::rename(&new_db, &backup).is_ok() {
-                    displaced_backups.push((backup, new_db.clone()));
-                }
-            }
-            if let Err(copy_err) = std::fs::copy(&old_db, &new_db) {
-                rollback(&moved_folders, &copied_folders, &copied_db_files, &displaced_backups);
+        let new_db = new_data_path.join(name);
+        if new_db.exists() {
+            // Keep the destination's own database under a unique name, restorable on failure.
+            // If it cannot be set aside, stop: copying over it would destroy it.
+            let backup = new_data_path.join(format!("{}.backup-{}", name, backup_suffix));
+            if let Err(e) = std::fs::rename(&new_db, &backup) {
+                plan.undo();
                 return Err(AppError::Internal(format!(
-                    "Failed to copy {}: {}。已回滚，数据仍在原文件夹。",
-                    name, copy_err
+                    "Cannot set aside the existing {} in the target folder: {}. Nothing was moved.",
+                    name, e
                 )));
             }
-            copied_db_files.push(new_db);
+            plan.displaced_backups.push((backup, new_db.clone()));
         }
+        if let Err(copy_err) = std::fs::copy(&old_db, &new_db) {
+            plan.undo();
+            return Err(AppError::Internal(format!(
+                "Failed to copy {}: {}. Rolled back; data is still in the old folder.",
+                name, copy_err
+            )));
+        }
+        plan.copied_files.push(new_db);
     }
 
     // 1.2 Data folders: rename when possible (same volume, instant), else copy.
@@ -805,25 +788,12 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
         }
         let new_existed = new_folder.exists();
         if std::fs::rename(&old_folder, &new_folder).is_ok() {
-            moved_folders.push((old_folder, new_folder));
+            plan.moved_folders.push((old_folder, new_folder));
             continue;
         }
-        if let Err(copy_err) = copy_dir_recursive(&old_folder, &new_folder) {
-            if !new_existed {
-                copied_folders.push(new_folder);
-            }
-            rollback(&moved_folders, &copied_folders, &copied_db_files, &displaced_backups);
-            return Err(AppError::Internal(format!(
-                "Failed to copy {}: {}。已回滚，数据仍在原文件夹。",
-                folder, copy_err
-            )));
-        }
+        let copied = copy_dir_recursive(&old_folder, &new_folder);
         if !new_existed {
-            copied_folders.push(new_folder);
-        }
-        copied_sources.push(old_folder);
-    }
-
+            plan.copied_folders.push(new_folder);
         }
         if let Err(copy_err) = copied {
             plan.undo();
@@ -857,11 +827,8 @@ pub fn set_data_path(app_handle: AppHandle, new_path: String) -> AppResult<()> {
         return Err(err);
     }
 
-    // 3. Committed: drop the old copies (best effort; the old DB may still be open here and
-    // is then simply left behind).
-    for file in &plan.old_files {
-        let _ = std::fs::remove_file(file);
-    }
+    // 3. Committed: drop the old copies of the data folders (best effort). The old database
+    // files stay, see 1.1.
     for dir in &plan.old_folders {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -880,8 +847,7 @@ struct DataMoveRollback {
     copied_files: Vec<std::path::PathBuf>,
     /// (backup, original) of databases that already existed at the new location.
     displaced_backups: Vec<(std::path::PathBuf, std::path::PathBuf)>,
-    /// Sources deleted only after a successful commit.
-    old_files: Vec<std::path::PathBuf>,
+    /// Copied (not renamed) source folders, deleted only after a successful commit.
     old_folders: Vec<std::path::PathBuf>,
 }
 

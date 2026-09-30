@@ -126,6 +126,10 @@ pub fn copy_diagnostics(app: AppHandle, state: State<'_, AppDataDir>) -> AppResu
     let is_private_for_report = |k: &str| {
         k.starts_with("cloud_sync_e2e_")
             || k == "file_server_access_key"
+            // On a shared broker the topic alone lets anyone push into this clipboard.
+            || k == "mqtt_topic"
+            || k == "mqtt_client_id"
+            || k == "app.anon_id"
             || k.ends_with("_username")
             || k == "cloud_sync_webdav_url"
             || k == "cloud_sync_server"

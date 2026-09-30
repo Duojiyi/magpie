@@ -42,24 +42,26 @@ pub fn perform_migration_v028(default_app_dir: &PathBuf) {
 
             let mut success = false;
 
-            // 1. Check for custom data path redirect (datapath.txt)
-            let old_redirect = old_app_dir.join("datapath.txt");
-            let new_redirect = default_app_dir.join("datapath.txt");
+            // The old app's datapath.txt redirect is deliberately NOT adopted: with the source
+            // left in place, that folder may still be in use by the other app, and both would
+            // then open (and clean up) the same database.
 
-            if old_redirect.exists() {
-                println!(">>> [MIGRATION] Found custom data path configuration. Migrating...");
-                let _ = std::fs::create_dir_all(&default_app_dir);
-                if std::fs::copy(&old_redirect, &new_redirect).is_ok() {
-                    success = true;
-                    println!(">>> [MIGRATION] Migrated datapath.txt successfully.");
-                }
-            }
-
-            // 2. Data Migration Logic
-            if !default_app_dir.exists() && !success {
+            // Data Migration Logic
+            if !default_app_dir.exists() {
                 println!(">>> [MIGRATION] Copying old data folder '贴汁'...");
-                success = std::fs::create_dir_all(default_app_dir).is_ok()
-                    && copy_dir_contents(&old_app_dir, default_app_dir).is_ok();
+                // Into a sibling temp folder first, renamed into place only when complete, so a
+                // partial copy is never mistaken for migrated data on the next start.
+                let tmp = sibling_with_suffix(default_app_dir, "v028.tmp");
+                let _ = std::fs::remove_dir_all(&tmp);
+                success = std::fs::create_dir_all(&tmp).is_ok()
+                    && copy_dir_contents(&old_app_dir, &tmp).is_ok()
+                    && {
+                        let _ = std::fs::remove_file(tmp.join("datapath.txt"));
+                        std::fs::rename(&tmp, default_app_dir).is_ok()
+                    };
+                if !success {
+                    let _ = std::fs::remove_dir_all(&tmp);
+                }
             } else if old_db.exists() && !new_db.exists() {
                 println!(">>> [MIGRATION] Pulling old data from '贴汁' to 'TieZ'...");
                 let _ = std::fs::create_dir_all(&default_app_dir);
@@ -82,11 +84,6 @@ pub fn perform_migration_v028(default_app_dir: &PathBuf) {
                     if std::fs::copy(&old_db, &new_db).is_ok() {
                         success = true;
                         println!(">>> [MIGRATION] Successfully migrated old database to TieZ.");
-                        let old_redirect = old_app_dir.join("datapath.txt");
-                        if old_redirect.exists() {
-                            let _ =
-                                std::fs::copy(&old_redirect, default_app_dir.join("datapath.txt"));
-                        }
                     } else {
                         let _ = std::fs::rename(&backup_db, &new_db);
                     }

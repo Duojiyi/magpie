@@ -4,6 +4,7 @@ const EMPTY_TAG_SUGGESTIONS: string[] = [];
 import type { Dispatch, SetStateAction, MouseEvent, ReactNode } from "react";
 import type { DragControls } from "framer-motion";
 import ClipboardItem from "../../features/clipboard/components/ClipboardItem";
+import { hasSensitiveTag } from "../../features/clipboard/lib/sensitiveTag";
 import type { QuickPasteHint } from "../../features/clipboard/types";
 import type { ClipboardEntry } from "../types";
 import type { Locale } from "../types";
@@ -95,12 +96,10 @@ export const useClipboardItemRenderer = ({
 }: UseClipboardItemRendererOptions): { renderItemContent: RenderItemContent } => {
   const renderItemContent = useCallback(
     (item: ClipboardEntry, index: number, dragControls?: DragControls, disableLayout?: boolean) => {
+      // Shared helper: the old inline list missed "__sensitive__", the tag the S hotkey and
+      // the tag input actually write, so those items were never masked.
       const isSensitiveHidden =
-        privacyProtection &&
-        (item.tags?.includes("sensitive") ||
-          item.tags?.includes("密码") ||
-          item.tags?.includes("password")) &&
-        !revealedIds.has(item.id);
+        privacyProtection && hasSensitiveTag(item.tags) && !revealedIds.has(item.id);
       const isEditingTags = editingTagsId === item.id;
 
       return (

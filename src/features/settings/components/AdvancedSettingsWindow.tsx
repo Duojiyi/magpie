@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { translations } from "../../../locales";
 import AdvancedSettingsGroup from "./groups/AdvancedSettingsGroup";
+import { useSwitchAccessibleNames } from "../../../shared/hooks/useSwitchAccessibleNames";
 import { useAppState } from "../../app/hooks/useAppState";
 import { useSettingsInit } from "../../../shared/hooks/useSettingsInit";
 import { useSettingsPostInit } from "../../../shared/hooks/useSettingsPostInit";
@@ -134,6 +135,8 @@ const AdvancedSettingsWindow = () => {
     } = appState;
 
     const tagManagerSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const shellRef = useRef<HTMLDivElement | null>(null);
+    useSwitchAccessibleNames(shellRef);
 
     const t = useCallback((key: string) => {
         const k = key as keyof typeof translations["zh"];
@@ -281,7 +284,7 @@ const AdvancedSettingsWindow = () => {
 
 
     return (
-        <div className="advanced-settings-window-shell">
+        <div className="advanced-settings-window-shell" ref={shellRef}>
             <AdvancedSettingsGroup
                 t={t}
                 cleanupRules={cleanupRules}

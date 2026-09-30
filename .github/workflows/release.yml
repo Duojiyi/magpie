@@ -28,6 +28,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # tauri-action names the release after tauri.conf.json's version, and latest.json is what
+      # every installed copy updates from. A tag that disagrees with the version would push
+      # assets into the wrong (older) release.
+      - name: verify tag matches app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match tauri.conf.json version $version"
+          }
+
       # Tauri v2 needs webkit2gtk 4.1; appindicator backs the tray and the xcb headers back
       # the clipboard (clipboard-rs) and input simulation (enigo) backends.
       - name: install Linux system dependencies
@@ -50,7 +62,7 @@ jobs:
           targets: ${{ matrix.rustTargets }}
 
       - name: install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: extract release notes from CHANGELOG
         id: changelog
@@ -84,7 +96,9 @@ jobs:
           tagName: v__VERSION__
           releaseName: "Magpie v__VERSION__"
           releaseBody: ${{ github.event.head_commit.message }}
-          releaseDraft: false
+          # A manual run (workflow_dispatch, possibly from any branch) only produces a draft, so
+          # it never becomes the live auto-update for every user.
+          releaseDraft: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}

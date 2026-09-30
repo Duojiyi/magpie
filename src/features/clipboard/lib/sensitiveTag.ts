@@ -18,7 +18,9 @@ export const SENSITIVE_TAG_NAMES: readonly string[] = [
 
 /** 判断条目是否带敏感标签（用于隐私模糊与列表视觉强调，需求 17.1 / 17.2）。 */
 export const hasSensitiveTag = (tags?: string[]): boolean =>
-  !!tags?.some((tag) => SENSITIVE_TAG_NAMES.includes(tag));
+  // Case-insensitive, like the backend's has_sensitive_tag: a "Sensitive" tag is encrypted
+  // there, so it must be masked here too.
+  !!tags?.some((tag) => SENSITIVE_TAG_NAMES.includes(tag.toLowerCase()));
 
 /**
  * 计算条目根容器的 className（需求 17.2）。

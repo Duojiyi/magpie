@@ -269,7 +269,9 @@ fn resolve_data_dir(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error:
             );
             app_dir = resolved;
             portable_used = used;
-            PORTABLE_MODE_ACTIVE.store(used, Ordering::SeqCst);
+            // Also when degraded (portable marker present, data/ missing): the exe is still the
+            // portable one, and the installer-based updater would install a second copy.
+            PORTABLE_MODE_ACTIVE.store(used || expecting_portable, Ordering::SeqCst);
             if degraded {
                 // A10(需求 8.8)：检测到便携标志（README_PORTABLE.md）说明期望以便携模式运行，
                 // 但 exe_dir/data/ 缺失（如被误删）。降级为标准模式：使用 %APPDATA%\app.magpie，

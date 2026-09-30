@@ -28,38 +28,53 @@ pub fn get_clipboard_history(
     offset: i32,
     content_type: Option<String>,
 ) -> AppResult<Vec<ClipboardEntry>> {
-    // 1. Get history from repository
-    let mut history = state
-        .repo
-        .get_history(limit, offset, content_type.as_deref())?;
-
-    // 2. Add session history items (non-persisted) ONLY on the first page
-    if offset == 0 {
+    // Session-only (non-persisted) items, newest first.
+    let session_items: Vec<ClipboardEntry> = {
         let session_items = session.inner().0.lock().unwrap();
-        for item in session_items.iter().rev() {
-            if let Some(ct) = content_type.as_deref() {
-                if item.content_type != ct {
-                    continue;
-                }
-            }
-            // Avoid duplicates: if item is already in DB, it will have id > 0
-            if !history.iter().any(|h| h.id == item.id && item.id != 0) {
-                history.push(item.clone());
+        session_items
+            .iter()
+            .rev()
+            .filter(|item| content_type.as_deref().is_none_or(|ct| item.content_type == ct))
+            .cloned()
+            .collect()
+    };
+
+    let sort_like_repo = |list: &mut Vec<ClipboardEntry>| {
+        // Pinned -> Pinned Order -> Timestamp -> ID. MUST match the repository's ORDER BY to
+        // keep pagination stable.
+        list.sort_by(|a, b| {
+            b.is_pinned
+                .cmp(&a.is_pinned)
+                .then_with(|| b.pinned_order.cmp(&a.pinned_order))
+                .then_with(|| b.timestamp.cmp(&a.timestamp))
+                .then_with(|| b.id.cmp(&a.id))
+        });
+    };
+
+    let mut history = if session_items.is_empty() {
+        state
+            .repo
+            .get_history(limit, offset, content_type.as_deref())?
+    } else {
+        // `offset` counts items of the merged list the UI already shows. Session items used to
+        // be added to the first page only while the offset advanced by database rows alone,
+        // so with persistence off (all rows in the session) the list never got past page one.
+        // Merge the database prefix with the session items and page through the result.
+        let (offset_u, limit_u) = (offset.max(0) as usize, limit.max(0) as usize);
+        let mut merged = state.repo.get_history(
+            offset.max(0).saturating_add(limit.max(0)),
+            0,
+            content_type.as_deref(),
+        )?;
+        for item in session_items {
+            if item.id == 0 || !merged.iter().any(|h| h.id == item.id) {
+                merged.push(item);
             }
         }
-    }
-
-    // 3. Apply stable sorting: Pinned -> Pinned Order -> Timestamp -> ID
-    // This MUST match the repository's logic to maintain pagination stability
-    history.sort_by(|a, b| {
-        b.is_pinned
-            .cmp(&a.is_pinned)
-            .then_with(|| b.pinned_order.cmp(&a.pinned_order))
-            .then_with(|| b.timestamp.cmp(&a.timestamp))
-            .then_with(|| b.id.cmp(&a.id))
-    });
-
-    // 4. Truncate to limit
+        sort_like_repo(&mut merged);
+        merged.into_iter().skip(offset_u).take(limit_u).collect()
+    };
+    sort_like_repo(&mut history);
     if history.len() > limit as usize {
         history.truncate(limit as usize);
     }
@@ -260,6 +275,7 @@ pub fn get_all_tags_info(
 
 #[tauri::command]
 pub fn rename_tag_globally(
+    app_handle: AppHandle,
     state: State<'_, DbState>,
     session: State<'_, SessionHistory>,
     old_name: String,
@@ -281,7 +297,15 @@ pub fn rename_tag_globally(
     state
         .tag_repo
         .rename(&old_name, &new_name)
-        .map_err(AppError::from)
+        .map_err(AppError::from)?;
+
+    // Renaming across the sensitive boundary ("work" -> "sensitive", "密码" -> "pw") changes
+    // whether those rows must be encrypted at rest; re-align them.
+    let sensitive = |name: &str| crate::database::has_sensitive_tag(&[name.to_string()]);
+    if sensitive(&old_name) != sensitive(&new_name) {
+        crate::services::sensitive_align::realign_sensitive_entries(app_handle);
+    }
+    Ok(())
 }
 
 #[tauri::command]

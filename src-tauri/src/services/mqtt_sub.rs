@@ -248,6 +248,9 @@ pub fn start_mqtt_client(app: AppHandle) {
         // Loop forever if enabled, using exponential backoff inside.
 
         loop {
+            // Generation before config: a restart landing between the two reads then still
+            // counts as newer than this connection, instead of being silently absorbed.
+            let generation = MQTT_GENERATION.load(Ordering::SeqCst);
             let config = get_mqtt_config(&app);
 
             if let Some(cfg) = config {
@@ -301,11 +304,9 @@ pub fn start_mqtt_client(app: AppHandle) {
                     format!("/{}", cfg.ws_path)
                 };
 
-                // Settings changes bump the generation; the connected loop below compares it so a
-                // restart (new server/topic/credentials, or MQTT switched off) takes effect now
-                // instead of whenever the current connection happens to drop.
-                let generation = MQTT_GENERATION.load(Ordering::SeqCst);
-
+                // Settings changes bump `generation` (read above, before the config); the
+                // connected loop below compares it so a restart (new server/topic/credentials,
+                // or MQTT switched off) takes effect now, not when the connection next drops.
                 info!(
                     ">>> [MQTT] Connecting to '{}:{}' (Protocol: {}, ID: {})",
                     host_clean, cfg.port, cfg.protocol, cfg.client_id

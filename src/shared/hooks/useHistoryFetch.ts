@@ -100,13 +100,14 @@ export const useHistoryFetch = ({
           const hasMoreNow = rawData.length > pageSize;
           const data = hasMoreNow ? rawData.slice(0, pageSize) : rawData;
 
-          // Calculate how many DB items we actually retrieved (id > 0)
-          // This is critical for the next offset to be correct
-          const dbItemsCount = data.filter(item => item.id > 0).length;
+          // The backend pages through the merged list (database rows + session-only items), so
+          // the offset advances by everything received. Counting database rows only froze the
+          // offset at 0 with persistence off, and the list never loaded past its first page.
+          const receivedCount = data.length;
 
           if (reset) {
             setHistory(data);
-            setCurrentOffset(dbItemsCount);
+            setCurrentOffset(receivedCount);
             setHasMore(hasMoreNow);
           } else {
             let nextItems: ClipboardEntry[] = [];
@@ -118,7 +119,7 @@ export const useHistoryFetch = ({
               return [...prev, ...nextItems];
             });
 
-            setCurrentOffset(prev => prev + dbItemsCount);
+            setCurrentOffset(prev => prev + receivedCount);
             // If we didn't add any NEW items but the backend says there are more,
             // it means the items we got were already in our list (maybe shifted due to sorting).
             // We should keep hasMore true so the user can try to load further.

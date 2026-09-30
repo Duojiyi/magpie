@@ -53,6 +53,10 @@ pub const ENCRYPT_PREFIX: &str = "dpapi:";
 
 #[cfg(windows)]
 pub fn encrypt_value(plain: &str) -> Option<String> {
+    // Portable build with its data folder next to the exe: key file, see init_portable_key_dir.
+    if PORTABLE_KEY_DIR.get().is_some() {
+        return portable_encrypt(plain);
+    }
     let bytes = plain.as_bytes();
     let mut in_blob = DATA_BLOB {
         cbData: bytes.len() as u32,
@@ -87,6 +91,9 @@ pub fn encrypt_value(plain: &str) -> Option<String> {
 
 #[cfg(windows)]
 pub fn decrypt_value(cipher: &str) -> Option<String> {
+    if cipher.starts_with(PORTABLE_PREFIX) {
+        return portable_decrypt(cipher);
+    }
     let payload = cipher.strip_prefix(ENCRYPT_PREFIX)?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(payload)
@@ -165,7 +172,6 @@ mod prefix_tests {
 
 /// Where the portable key file lives. Set once during startup, after the data directory is
 /// resolved (the key must sit beside the database so the two travel together).
-#[cfg(not(windows))]
 static PORTABLE_KEY_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 #[cfg(not(windows))]
@@ -173,8 +179,21 @@ pub fn init_portable_key_dir(dir: std::path::PathBuf) {
     let _ = PORTABLE_KEY_DIR.set(dir);
 }
 
+/// Windows uses DPAPI, which binds ciphertext to the current Windows user on this machine.
+/// That is wrong for the portable build, whose whole point is carrying the `data` folder to
+/// another PC: every sensitive entry and saved secret became unreadable there. When the data
+/// folder is the portable `<exe dir>\data`, use the same key-file scheme as macOS/Linux, so
+/// the key travels with the data. Existing `dpapi:` values still decrypt on the original PC.
 #[cfg(windows)]
-pub fn init_portable_key_dir(_dir: std::path::PathBuf) {}
+pub fn init_portable_key_dir(dir: std::path::PathBuf) {
+    let is_portable_data_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|exe_dir| exe_dir.join("data")))
+        .is_some_and(|portable| portable == dir);
+    if is_portable_data_dir {
+        let _ = PORTABLE_KEY_DIR.set(dir);
+    }
+}
 
 /// Load (or create) the 32-byte local key used to encrypt sensitive values at rest.
 ///
@@ -187,7 +206,6 @@ pub fn init_portable_key_dir(_dir: std::path::PathBuf) {}
 /// somewhere else without its key, which is the same protection DPAPI gives on Windows. It
 /// does **not** protect against code already running as this user. Using the OS keychain would
 /// raise that bar, at the cost of failing on headless and minimal desktop installs.
-#[cfg(not(windows))]
 fn portable_key() -> Option<[u8; 32]> {
     use std::io::Read;
 
@@ -263,6 +281,22 @@ fn portable_key() -> Option<[u8; 32]> {
 
 #[cfg(not(windows))]
 pub fn encrypt_value(plain: &str) -> Option<String> {
+    portable_encrypt(plain)
+}
+
+#[cfg(not(windows))]
+pub fn decrypt_value(cipher_text: &str) -> Option<String> {
+    // DPAPI is Windows-only, so a `dpapi:` payload came from a Windows install (a copied data
+    // directory, or a synced snapshot) and genuinely cannot be read here. Returning it
+    // unchanged used to surface the literal ciphertext to the user as if it were their API
+    // key; `None` is the honest answer and callers already treat it as "stored but unreadable".
+    if cipher_text.starts_with(ENCRYPT_PREFIX) {
+        return None;
+    }
+    portable_decrypt(cipher_text)
+}
+
+fn portable_encrypt(plain: &str) -> Option<String> {
     use chacha20poly1305::aead::{Aead, KeyInit, Payload};
     use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 
@@ -308,18 +342,10 @@ pub fn encrypt_value(plain: &str) -> Option<String> {
     ))
 }
 
-#[cfg(not(windows))]
-pub fn decrypt_value(cipher_text: &str) -> Option<String> {
+fn portable_decrypt(cipher_text: &str) -> Option<String> {
     use chacha20poly1305::aead::{Aead, KeyInit, Payload};
     use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 
-    // DPAPI is Windows-only, so a `dpapi:` payload came from a Windows install (a copied data
-    // directory, or a synced snapshot) and genuinely cannot be read here. Returning it
-    // unchanged used to surface the literal ciphertext to the user as if it were their API
-    // key; `None` is the honest answer and callers already treat it as "stored but unreadable".
-    if cipher_text.starts_with(ENCRYPT_PREFIX) {
-        return None;
-    }
     let Some(payload) = cipher_text.strip_prefix(PORTABLE_PREFIX) else {
         return Some(cipher_text.to_string());
     };

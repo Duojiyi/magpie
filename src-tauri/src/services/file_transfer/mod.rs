@@ -37,18 +37,28 @@ const ACCESS_COOKIE: &str = "mgk";
 /// (`?k=`) and is then kept in an HttpOnly cookie. Generated once and persisted, so a
 /// phone's bookmark keeps working across restarts.
 pub fn file_server_access_key(app: &AppHandle) -> String {
-    let db = app.state::<DbState>();
-    if let Ok(Some(key)) = db.settings_repo.get(ACCESS_KEY_SETTING) {
-        if key.len() >= 32 && key.chars().all(|c| c.is_ascii_hexdigit()) {
-            return key;
-        }
+    // Cached for the process: the running server and the QR code must always agree, even if
+    // the stored setting is cleared meanwhile (reset_settings), which would otherwise mint a
+    // new key for the QR while the server still enforces the old one.
+    static CACHED: Mutex<Option<String>> = Mutex::new(None);
+    let mut cached = CACHED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(key) = cached.as_ref() {
+        return key.clone();
     }
-    let key = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
-    let _ = db.settings_repo.set(ACCESS_KEY_SETTING, &key);
+    let db = app.state::<DbState>();
+    let key = match db.settings_repo.get(ACCESS_KEY_SETTING) {
+        Ok(Some(key)) if key.len() >= 32 && key.chars().all(|c| c.is_ascii_hexdigit()) => key,
+        _ => {
+            let key = format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            );
+            let _ = db.settings_repo.set(ACCESS_KEY_SETTING, &key);
+            key
+        }
+    };
+    *cached = Some(key.clone());
     key
 }
 

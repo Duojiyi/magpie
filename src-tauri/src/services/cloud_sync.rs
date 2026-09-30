@@ -3581,46 +3581,44 @@ async fn pull_remote_settings_snapshot_from_head(
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0);
 
-    let Some((device_id, latest_ts)) = head
+    // Newest first. A candidate whose snapshot cannot be used (unsealed while E2E is on, from
+    // a peer on an older version; unreadable; tampered) is skipped instead of ending the pull,
+    // so it cannot block valid snapshots from other devices.
+    let mut candidates: Vec<(String, i64)> = head
         .devices
         .iter()
         .filter(|(device_id, device_head)| {
             !crate::app::system::same_anon_id(device_id, &cfg.device_id)
-                && device_head.settings_updated_at > 0
+                && device_head.settings_updated_at > last_applied_ts
         })
         .map(|(device_id, device_head)| (device_id.clone(), device_head.settings_updated_at))
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
-    else {
-        return Ok(0);
-    };
+        .collect();
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    if latest_ts <= last_applied_ts {
-        return Ok(0);
+    for (device_id, _) in candidates.into_iter().take(MAX_REMOTE_SNAPSHOTS) {
+        let Some(snapshot) =
+            fetch_webdav_settings_snapshot(client, cfg, settings_path, &device_id).await?
+        else {
+            continue;
+        };
+        if snapshot.updated_at <= last_applied_ts {
+            continue;
+        }
+        let Some(settings) = open_settings_snapshot(&snapshot, cryptor) else {
+            continue;
+        };
+
+        let changed = apply_synced_settings(app, &settings)?;
+        db_state
+            .settings_repo
+            .set(
+                "cloud_sync_settings_applied_at",
+                &snapshot.updated_at.to_string(),
+            )
+            .map_err(AppError::from)?;
+        return Ok(changed);
     }
-
-    let Some(snapshot) =
-        fetch_webdav_settings_snapshot(client, cfg, settings_path, &device_id).await?
-    else {
-        return Ok(0);
-    };
-    if snapshot.updated_at <= last_applied_ts {
-        return Ok(0);
-    }
-    let Some(settings) = open_settings_snapshot(&snapshot, cryptor) else {
-        // Unauthenticated (E2E on, snapshot not sealed), unreadable, or tampered: skip it.
-        // Not marked as applied, so a later valid snapshot from that device still lands.
-        return Ok(0);
-    };
-
-    let changed = apply_synced_settings(app, &settings)?;
-    db_state
-        .settings_repo
-        .set(
-            "cloud_sync_settings_applied_at",
-            &snapshot.updated_at.to_string(),
-        )
-        .map_err(AppError::from)?;
-    Ok(changed)
+    Ok(0)
 }
 
 async fn cleanup_local_webdav_ops(

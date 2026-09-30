@@ -93,8 +93,59 @@ fn normalize_remote_img_url(src: &str) -> Option<String> {
     None
 }
 
+/// Hosts a copied `<img src>` must never make us contact: this runs for any HTML anyone
+/// puts on the clipboard, so without it a web page could have Magpie probe the local
+/// network (router admin pages, localhost services) on its behalf.
+fn is_private_image_host(url: &str) -> bool {
+    let Some(host) = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|h| h.to_ascii_lowercase()))
+    else {
+        return true;
+    };
+    // IPv6 literals come back bracketed from host_str().
+    match host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+        }
+        Ok(std::net::IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (first & 0xfe00) == 0xfc00 // unique local
+                || (first & 0xffc0) == 0xfe80 // link local
+        }
+        Err(_) => host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local"),
+    }
+}
+
+/// Remote image fetches are blocking and run on the clipboard listener thread; a copy with
+/// many `<img>` from a slow host stalled capture for N × timeout (copies made meanwhile were
+/// collapsed and lost). Allow a few per window; the rest keep their remote `src`.
+fn take_remote_image_budget() -> bool {
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+    const WINDOW_MS: u64 = 10_000;
+    const MAX_PER_WINDOW: u32 = 6;
+    static WINDOW_START: AtomicU64 = AtomicU64::new(0);
+    static USED: AtomicU32 = AtomicU32::new(0);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    if now.saturating_sub(WINDOW_START.load(Ordering::Relaxed)) >= WINDOW_MS {
+        WINDOW_START.store(now, Ordering::Relaxed);
+        USED.store(0, Ordering::Relaxed);
+    }
+    USED.fetch_add(1, Ordering::Relaxed) < MAX_PER_WINDOW
+}
+
 fn fetch_remote_image(url: &str) -> Option<(Vec<u8>, &'static str)> {
     static REMOTE_IMG_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+
+    if is_private_image_host(url) || !take_remote_image_budget() {
+        return None;
+    }
 
     let client = REMOTE_IMG_CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
@@ -1374,6 +1425,24 @@ mod tests {
         // Consecutive tabs mean empty cells; collapsing them would shift later columns left.
         let html = "<table><tr><td>A1</td><td></td><td>C1</td></tr></table>";
         assert_eq!(extract_plain_text_from_htmlish(html), "A1\t\tC1");
+    }
+
+    #[test]
+    fn copied_images_never_trigger_requests_to_local_hosts() {
+        use super::is_private_image_host;
+        for url in [
+            "http://127.0.0.1/a.png",
+            "http://192.168.1.1/admin.png",
+            "http://10.0.0.5/x.gif",
+            "http://[::1]/x.png",
+            "http://localhost:8080/x.png",
+            "http://printer.local/x.png",
+            "not a url",
+        ] {
+            assert!(is_private_image_host(url), "{url}");
+        }
+        assert!(!is_private_image_host("https://example.com/a.png"));
+        assert!(!is_private_image_host("https://8.8.8.8/a.png"));
     }
 
     #[test]

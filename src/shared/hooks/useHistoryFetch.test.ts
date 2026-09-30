@@ -79,6 +79,17 @@ describe("useHistoryFetch — get_clipboard_history 参数名契约（P1-1）", 
     expect(Object.keys(args as object)).not.toContain("content_type");
   });
 
+  it("offset advances by every received item, session-only ones included", async () => {
+    // Persistence off: rows are session-only (negative ids). Counting only id > 0 kept the
+    // offset at 0, so the list could never load past its first page.
+    const rows = [{ id: -3 }, { id: -2 }, { id: 5 }];
+    invokeMock.mockResolvedValue(rows);
+    const setCurrentOffset = vi.fn();
+    const { fetchHistory } = useHistoryFetch(buildOptions({ setCurrentOffset }));
+    await fetchHistory(true);
+    expect(setCurrentOffset).toHaveBeenCalledWith(3);
+  });
+
   it("无类型筛选时 contentType 为 undefined（键名仍为 camelCase）", async () => {
     const { fetchHistory } = useHistoryFetch(buildOptions({ typeFilter: null }));
     await fetchHistory(true);

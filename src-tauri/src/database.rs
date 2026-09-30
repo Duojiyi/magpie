@@ -31,7 +31,9 @@ const SENSITIVE_KEYS: &[&str] = &[
 
 // 敏感标签识别集合：统一使用保留标签 `__sensitive__`（新写入），
 // 同时兼容历史数据中的 `sensitive` / `密码`（需求 17）。
-pub const SENSITIVE_TAGS: &[&str] = &["__sensitive__", "sensitive", "密码"];
+// "password" matches the frontend list (sensitiveTag.ts): the UI masked such items while the
+// database kept them in plaintext.
+pub const SENSITIVE_TAGS: &[&str] = &["__sensitive__", "sensitive", "密码", "password"];
 
 pub fn is_sensitive_key(key: &str) -> bool {
     SENSITIVE_KEYS.iter().any(|k| k.eq_ignore_ascii_case(key))

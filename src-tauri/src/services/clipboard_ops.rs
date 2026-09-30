@@ -364,6 +364,8 @@ pub async fn paste_content_transiently(
             .unwrap_or(current_type == "rich_text" && html_content.as_deref().is_some()),
     )
     .await?;
+    let seq_after_write =
+        crate::infrastructure::windows_api::win_clipboard::get_clipboard_sequence_number();
 
     let paste_result = perform_paste_action(
         &app_handle,
@@ -377,7 +379,25 @@ pub async fn paste_content_transiently(
     .await;
 
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    let restore_result = restore_clipboard_snapshot(previous_clipboard).await;
+    // Only put the old clipboard back if nothing else wrote to it meanwhile: a copy made by
+    // the user (or the target app) during the paste window used to be overwritten.
+    // Windows only: its sequence number moves synchronously with every write. Elsewhere it
+    // is bumped by the change watcher, possibly after we read it, which would look like an
+    // outside change and skip every restore.
+    #[cfg(target_os = "windows")]
+    let clipboard_untouched =
+        crate::infrastructure::windows_api::win_clipboard::get_clipboard_sequence_number()
+            == seq_after_write;
+    #[cfg(not(target_os = "windows"))]
+    let clipboard_untouched = {
+        let _ = seq_after_write;
+        true
+    };
+    let restore_result = if clipboard_untouched {
+        restore_clipboard_snapshot(previous_clipboard).await
+    } else {
+        Ok(())
+    };
 
     paste_result?;
     restore_result?;

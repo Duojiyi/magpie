@@ -225,6 +225,10 @@ fn openable_url(content: &str) -> Option<String> {
             "file" | "javascript" | "vbscript" | "data" | "jar" | "shell" | "search"
                 | "search-ms" | "res" | "mk" | "its" | "hcp" | "help" | "microsoft-edge"
                 | "cmd" | "powershell" | "about" | "view-source"
+                // Remote mounts / launchers: mount a share, leak credentials or run code.
+                | "smb" | "cifs" | "afp" | "nfs" | "dav" | "davs" | "webdav" | "webdavs"
+                | "jnlp" | "jnlps" | "ldap" | "ldaps" | "telnet" | "rlogin" | "mhtml"
+                | "x-mhtml" | "vnc" | "rdp" | "library-ms" | "osascript" | "applescript"
         );
     if refused {
         None
@@ -623,6 +627,8 @@ mod openable_url_tests {
             "ms-msdt:/id PCWDiagnostic",
             "search-ms:query=x",
             "javascript:alert(1)",
+            "smb://evil.host/share",
+            "jnlp://evil.host/app.jnlp",
             r"C:\Windows\notepad.exe",
             "https://a.b/\u{0007}",
             "",

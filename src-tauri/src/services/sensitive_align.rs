@@ -7,18 +7,27 @@ use crate::database::{DbState, SENSITIVE_TAGS};
 use crate::infrastructure::encryption;
 use crate::infrastructure::repository::settings_repo::SettingsRepository;
 
+/// Bumped when the set of sensitive tags changes (v2 added password), so rows tagged under
+/// the new rule are re-aligned once.
+const SENSITIVE_ALIGNMENT_DONE_KEY: &str = "db.sensitive_alignment_done_v2";
+
 pub fn spawn_sensitive_alignment(app_handle: AppHandle) {
-    thread::spawn(move || run_alignment(app_handle));
+    thread::spawn(move || run_alignment(app_handle, false));
 }
 
-fn run_alignment(app_handle: AppHandle) {
+/// Re-run the alignment now, e.g. after a tag rename moved rows across the sensitive line.
+pub fn realign_sensitive_entries(app_handle: AppHandle) {
+    thread::spawn(move || run_alignment(app_handle, true));
+}
+
+fn run_alignment(app_handle: AppHandle, force: bool) {
     let db_state = app_handle.state::<DbState>();
     let done = db_state
         .settings_repo
-        .get("db.sensitive_alignment_done")
+        .get(SENSITIVE_ALIGNMENT_DONE_KEY)
         .unwrap_or(None)
         .unwrap_or_else(|| "false".to_string());
-    if done == "true" {
+    if done == "true" && !force {
         return;
     }
 
@@ -144,5 +153,5 @@ fn run_alignment(app_handle: AppHandle) {
 
     let _ = db_state
         .settings_repo
-        .set("db.sensitive_alignment_done", "true");
+        .set(SENSITIVE_ALIGNMENT_DONE_KEY, "true");
 }

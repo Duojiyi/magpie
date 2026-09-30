@@ -14,6 +14,7 @@ export const useFileServerAccessUrl = (ip: string, port: string | number): strin
     invoke<string>("get_file_server_access_key").then(setKey).catch(console.error);
   }, []);
 
-  if (!ip || !port) return "";
-  return `http://${ip}:${port}/${key ? `?k=${key}` : ""}`;
+  // Nothing until the key is known: a keyless link would only lead to the "scan the QR" page.
+  if (!ip || !port || !key) return "";
+  return `http://${ip}:${port}/?k=${key}`;
 };

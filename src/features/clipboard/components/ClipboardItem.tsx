@@ -959,10 +959,13 @@ const ClipboardItem = ({
         };
     }, [item.content_type, item.file_preview_exists, singleFilePath]);
 
+    // Not for masked sensitive items: the hover preview window renders the full content and
+    // has no way to know the item is masked.
     const compactPreviewEnabled =
         compactMode &&
         COMPACT_PREVIEW_WINDOW_SUPPORTED &&
-        item.content_type !== "file";
+        item.content_type !== "file" &&
+        !isSensitiveHidden;
 
     const isHoverPreviewRequestCurrent = (requestId: number) => {
         const node = itemRef.current;

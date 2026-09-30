@@ -1017,6 +1017,12 @@ impl ClipboardRepository for SqliteClipboardRepository {
         if term.is_empty() {
             return Ok(Vec::new());
         }
+        // `%` and `_` are LIKE wildcards: searching "_" matched every row and "100%" anything
+        // starting with 100. Escape them (and the escape char) for the SQL side only.
+        let like_term = term
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
 
         #[cfg(feature = "portable")]
         {
@@ -1025,16 +1031,16 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
                  FROM clipboard_history ch
                  INNER JOIN entry_tags et ON ch.id = et.entry_id
-                 WHERE et.tag LIKE '%' || ?1 || '%'
+                 WHERE et.tag LIKE '%' || ?1 || '%' ESCAPE '\\'
                  ORDER BY ch.timestamp DESC
                  LIMIT ?2"
             } else {
                 "SELECT DISTINCT ch.id, ch.content_type, ch.content, ch.html_content, ch.source_app, ch.timestamp, ch.preview, ch.is_pinned, ch.tags, ch.use_count, ch.is_external, ch.pinned_order, ch.source_app_path
                  FROM clipboard_history ch
                  LEFT JOIN entry_tags et ON ch.id = et.entry_id
-                 WHERE ch.content LIKE '%' || ?1 || '%'
-                    OR ch.source_app LIKE '%' || ?1 || '%'
-                    OR et.tag LIKE '%' || ?1 || '%'
+                 WHERE ch.content LIKE '%' || ?1 || '%' ESCAPE '\\'
+                    OR ch.source_app LIKE '%' || ?1 || '%' ESCAPE '\\'
+                    OR et.tag LIKE '%' || ?1 || '%' ESCAPE '\\'
                  ORDER BY ch.timestamp DESC
                  LIMIT ?2"
             };
@@ -1042,7 +1048,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
             let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
 
             let rows = stmt
-                .query_map(params![term, limit], |row| {
+                .query_map(params![like_term, limit], |row| {
                     let tags_str: String =
                         row.get::<_, String>(8).unwrap_or_else(|_| "[]".to_string());
                     Ok(ClipboardEntry {
@@ -1096,7 +1102,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                          WHERE se.entry_id = ch.id
                            AND se.tag COLLATE NOCASE IN {}
                      )
-                       AND et.tag LIKE '%' || ?1 || '%'
+                       AND et.tag LIKE '%' || ?1 || '%' ESCAPE '\\'
                      ORDER BY ch.timestamp DESC, ch.id DESC
                      LIMIT ?2",
                     sensitive_tags_sql
@@ -1112,9 +1118,9 @@ impl ClipboardRepository for SqliteClipboardRepository {
                            AND se.tag COLLATE NOCASE IN {}
                      )
                        AND (
-                         ch.content LIKE '%' || ?1 || '%'
-                         OR ch.source_app LIKE '%' || ?1 || '%'
-                         OR et.tag LIKE '%' || ?1 || '%'
+                         ch.content LIKE '%' || ?1 || '%' ESCAPE '\\'
+                         OR ch.source_app LIKE '%' || ?1 || '%' ESCAPE '\\'
+                         OR et.tag LIKE '%' || ?1 || '%' ESCAPE '\\'
                        )
                      ORDER BY ch.timestamp DESC, ch.id DESC
                      LIMIT ?2",
@@ -1126,7 +1132,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 .prepare(&sql_non_sensitive)
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map(params![term, limit], |row| {
+                .query_map(params![like_term, limit], |row| {
                     let tags_str: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
                     let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
                     let content_raw: String = row.get(2)?;
@@ -1310,7 +1316,11 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 return Err(e);
             }
         }
-        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        if let Err(e) = conn.execute_batch("COMMIT") {
+            // Never leave the shared connection inside an open transaction.
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e.to_string());
+        }
         for path in candidate_files {
             // No row is excluded any more: the deleted ones are gone.
             if path.exists() && !attachment_still_referenced(&conn, 0, &path) {
